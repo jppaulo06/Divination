@@ -11,6 +11,18 @@ class RagChain:
         self.question_answer_chain = question_answer_chain
 
     def answer(self, query, chat_id):
+        return self._invoke(query, chat_id)["answer"]
+
+    def answer_with_context(self, query, chat_id, callbacks=None):
+        """Same as answer(), but also returns the retrieved documents.
+
+        Used by the eval suite to build retrieval_context for grounding
+        metrics without changing the production answer() contract.
+        """
+        result = self._invoke(query, chat_id, callbacks=callbacks)
+        return result["answer"], result.get("context", [])
+
+    def _invoke(self, query, chat_id, callbacks=None):
         rag_chain = create_retrieval_chain(
             self.history_retriever, self.question_answer_chain
         )
@@ -22,9 +34,9 @@ class RagChain:
             history_messages_key="chat_history",
             output_messages_key="answer",
         )
-        answer = conversational_rag_chain.invoke(
-            {"input": query},
-            config={"configurable": {"session_id": chat_id}},
-        )["answer"]
 
-        return answer
+        config = {"configurable": {"session_id": chat_id}}
+        if callbacks:
+            config["callbacks"] = callbacks
+
+        return conversational_rag_chain.invoke({"input": query}, config=config)

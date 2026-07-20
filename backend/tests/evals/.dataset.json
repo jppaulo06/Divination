@@ -1,0 +1,252 @@
+[
+  {
+    "name": "fireball-upcast-damage",
+    "scenario": "A player is planning to cast Fireball at 5th level during an upcoming encounter and wants to know exactly how much damage to expect and how the area works.",
+    "expected_outcome": "The user learns Fireball is a 3rd-level Evocation spell with a 150-foot range that creates a 20-foot-radius sphere, deals 8d6 Fire damage (half on a successful Dexterity save), and gains 1d6 extra damage per spell slot level above 3rd, so at 5th level it deals 10d6.",
+    "user_description": "A player at the table who wants precise numbers before committing to an action in combat.",
+    "turns": [
+      {"role": "user", "content": "If I cast Fireball using a 5th-level spell slot, how much fire damage does it deal and how big is the area?"}
+    ],
+    "comments": "Grounding/numeric precision check: exact damage dice and upcast scaling for Fireball."
+  },
+  {
+    "name": "counterspell-mechanics",
+    "scenario": "A player wants to understand exactly what happens when they use Counterspell to interrupt an enemy spellcaster.",
+    "expected_outcome": "The user learns Counterspell is a Reaction usable when a creature within 60 feet is seen casting a spell with Verbal, Somatic, or Material components; the target makes a Constitution saving throw, and on a failure the spell dissipates with no effect, wasting the action, Bonus Action, or Reaction used to cast it, and if it was cast with a spell slot, the slot isn't expended.",
+    "user_description": "A player double-checking a reaction spell before using it against a boss.",
+    "turns": [
+      {"role": "user", "content": "If I use Counterspell on an enemy wizard, what actually happens if their spell fails its save? Do they lose the spell slot?"}
+    ],
+    "comments": "Grounding check on Counterspell's save-and-effect wording, including the spell slot clause."
+  },
+  {
+    "name": "shield-vs-magic-missile",
+    "scenario": "A wizard player wants to confirm whether casting Shield in reaction to Magic Missile prevents all damage from that spell.",
+    "expected_outcome": "The user learns Shield is a Reaction triggered by being hit by an attack roll or targeted by Magic Missile, grants a +5 bonus to AC until the start of the caster's next turn including against the triggering attack, and explicitly causes the caster to take no damage from Magic Missile.",
+    "user_description": "A wizard player planning their reactions against a spellcaster enemy.",
+    "turns": [
+      {"role": "user", "content": "My wizard has Shield prepared. If an enemy hits me with Magic Missile, can I use Shield to avoid the damage entirely?"}
+    ],
+    "comments": "Cross-spell interaction: Shield's explicit Magic Missile immunity clause."
+  },
+  {
+    "name": "daylight-vs-darkness",
+    "scenario": "A DM wants to know what happens when a cleric casts Daylight to counter an area that a warlock had already covered in Darkness.",
+    "expected_outcome": "The user learns Daylight (a 3rd-level spell) dispels Darkness in any overlapping area as long as the Darkness was created by a spell of 3rd level or lower, per Daylight's explicit overlap rule, and that Darkness has the same kind of overlap clause against Bright or Dim Light of 2nd level or lower.",
+    "user_description": "A DM adjudicating a spell interaction mid-session and wanting the exact rule text.",
+    "turns": [
+      {"role": "user", "content": "My party's cleric casts Daylight into an area where the enemy warlock already cast Darkness. What happens to the Darkness?"}
+    ],
+    "comments": "Cross-spell interaction relying on each spell's explicit overlap-dispel clause."
+  },
+  {
+    "name": "globe-of-invulnerability-upcast",
+    "scenario": "A wizard wants to know exactly what level of spells their Globe of Invulnerability blocks, including if they upcast it.",
+    "expected_outcome": "The user learns Globe of Invulnerability (6th level) blocks spells of 5th level or lower cast from outside the barrier, and that using a higher-level spell slot blocks one level higher per slot level above 6th.",
+    "user_description": "A wizard planning defenses before a big fight and checking upcast scaling.",
+    "turns": [
+      {"role": "user", "content": "If I cast Globe of Invulnerability with an 8th-level spell slot, what level of spells does it block?"}
+    ],
+    "comments": "Numeric precision on upcast scaling: base level-5 block plus 1 level per slot level above 6."
+  },
+  {
+    "name": "dispel-magic-thresholds",
+    "scenario": "A player wants to know whether Dispel Magic can automatically end a powerful ongoing spell on an enemy, like a 5th-level spell.",
+    "expected_outcome": "The user learns Dispel Magic (3rd level) automatically ends spells of 3rd level or lower on the target, but for spells of 4th level or higher it requires an ability check against the caster's spellcasting ability with a DC of 10 plus the spell's level, and that using a higher-level spell slot auto-ends the spell if the slot level is equal to or greater than the spell's level.",
+    "user_description": "A player deciding whether Dispel Magic is reliable enough to use on a specific enemy buff.",
+    "turns": [
+      {"role": "user", "content": "If I cast Dispel Magic at an enemy that's under the effect of a 5th-level spell, will it definitely work?"}
+    ],
+    "comments": "Grounding check on Dispel Magic's automatic-vs-check thresholds."
+  },
+  {
+    "name": "antimagic-field-stacking",
+    "scenario": "A DM wants to confirm whether an enemy caster could use Dispel Magic to cancel an existing Antimagic Field, or whether a second Antimagic Field cancels the first.",
+    "expected_outcome": "The user learns Antimagic Field suppresses spellcasting and magic inside its aura, that Dispel Magic has no effect on an Antimagic Field, and that auras created by different castings of Antimagic Field don't nullify each other.",
+    "user_description": "A DM working out an edge case for an antimagic-themed dungeon room.",
+    "turns": [
+      {"role": "user", "content": "Can Dispel Magic end an Antimagic Field, or can two Antimagic Fields cancel each other out?"}
+    ],
+    "comments": "Cross-spell interaction relying on Antimagic Field's explicit no-effect clauses."
+  },
+  {
+    "name": "prismatic-wall-layers",
+    "scenario": "A DM building a vault guardian wants to understand how Prismatic Wall's layers are destroyed and whether Dispel Magic can bring it down quickly.",
+    "expected_outcome": "The user learns Prismatic Wall has seven layers, from red through violet, that must be destroyed one at a time in order using means specific to each layer, that Antimagic Field has no effect on the wall, and that Dispel Magic can affect only the violet layer.",
+    "user_description": "A DM designing an encounter around a powerful magical barrier.",
+    "turns": [
+      {"role": "user", "content": "How would a party actually bring down a Prismatic Wall? Can they just Dispel Magic it away?"}
+    ],
+    "comments": "Grounding check on Prismatic Wall's layer-by-layer destruction rules and its Dispel Magic exception."
+  },
+  {
+    "name": "wall-of-force-vs-disintegrate",
+    "scenario": "A player wants to know if there's any spell that can break through an enemy's Wall of Force.",
+    "expected_outcome": "The user learns Wall of Force is immune to all damage and can't be dispelled by Dispel Magic, but a Disintegrate spell destroys it instantly.",
+    "user_description": "A player looking for a way past an obstacle their party is facing.",
+    "turns": [
+      {"role": "user", "content": "An enemy sealed us in with Wall of Force. Is there any spell that can get us through it?"}
+    ],
+    "comments": "Cross-spell interaction: Wall of Force's Disintegrate exception."
+  },
+  {
+    "name": "contingency-eligibility",
+    "scenario": "A wizard wants to set up a defensive Contingency spell and asks what kinds of spells qualify and how many they can have active.",
+    "expected_outcome": "The user learns Contingency lets you choose a spell of 5th level or lower that has a casting time of an action and can target you, that only one Contingency spell can be active at a time, and that casting Contingency again ends the effect of a previous one.",
+    "user_description": "A wizard player planning a defensive Contingency before a dangerous expedition.",
+    "turns": [
+      {"role": "user", "content": "I want to set up Contingency with Water Breathing. What are the requirements for the spell I choose, and can I have more than one Contingency active?"}
+    ],
+    "comments": "Grounding check on Contingency's spell-eligibility and one-at-a-time limitation."
+  },
+  {
+    "name": "simulacrum-stats-repair",
+    "scenario": "A wizard wants to create a Simulacrum of an ally and asks how strong it will be and how it's repaired if damaged.",
+    "expected_outcome": "The user learns a Simulacrum uses the original creature's statistics except its Hit Point maximum is half the original's, it can't gain levels, it can't take Short or Long Rests, and repairing its Hit Points costs 100 GP per Hit Point restored during a Long Rest within 5 feet of it.",
+    "user_description": "A wizard player considering using Simulacrum for a scouting mission.",
+    "turns": [
+      {"role": "user", "content": "If I make a Simulacrum of my party's fighter, how tough is it compared to the original, and how do I heal it if it takes damage?"}
+    ],
+    "comments": "Grounding check on Simulacrum's stat/HP reduction and repair-cost mechanics."
+  },
+  {
+    "name": "true-polymorph-vs-polymorph",
+    "scenario": "A player wants to know what makes True Polymorph different from the regular Polymorph spell, especially regarding permanence.",
+    "expected_outcome": "The user learns True Polymorph (9th level) can turn a creature or nonmagical object into a different creature or object, and that maintaining Concentration for the full 1-hour duration makes the transformation permanent, which the standard Polymorph spell (4th level) cannot do.",
+    "user_description": "A player comparing spell options before choosing what to prepare.",
+    "turns": [
+      {"role": "user", "content": "What's actually different between Polymorph and True Polymorph? Is one of them permanent?"}
+    ],
+    "comments": "Comparative grounding check between two similarly named spells."
+  },
+  {
+    "name": "revivify-vs-raise-dead",
+    "scenario": "A cleric player wants to know the time limits and drawbacks of Revivify versus Raise Dead before deciding which to use on a fallen ally.",
+    "expected_outcome": "The user learns Revivify (3rd level) can only revive a creature that died within the last minute and returns it with 1 Hit Point with no mention of a D20 Test penalty, while Raise Dead (5th level) can revive a creature dead no longer than 10 days but the returning creature takes a cumulative -4 penalty to D20 Tests that decreases by 1 after each Long Rest.",
+    "user_description": "A cleric player who just watched an ally drop and is deciding which spell to use.",
+    "turns": [
+      {"role": "user", "content": "My ally just died. I have both Revivify and Raise Dead prepared - what's the actual difference between them?"}
+    ],
+    "comments": "Comparative grounding check that also probes whether the model notices Revivify has no D20 Test penalty clause, unlike Raise Dead."
+  },
+  {
+    "name": "haste-end-effect",
+    "scenario": "A player wants to know what happens to their character right when their Haste spell ends, not just what it does while active.",
+    "expected_outcome": "The user learns Haste doubles Speed, grants a +2 bonus to AC, gives Advantage on Dexterity saving throws, and grants an extra action limited to Attack, Dash, Disengage, Hide, or Utilize while active, and that when it ends the target has the Incapacitated condition and a Speed of 0 until the end of its next turn.",
+    "user_description": "A player planning combat turns around when their buff spell will run out.",
+    "turns": [
+      {"role": "user", "content": "If I cast Haste on our barbarian, what bonuses does it give, and what happens to them the moment it wears off?"}
+    ],
+    "comments": "Grounding check requiring both the active-buff details and the lethargy-on-end effect."
+  },
+  {
+    "name": "polymorph-spellcasting-restriction",
+    "scenario": "A player wants to polymorph a spellcasting ally into a bear for a fight and asks what the target can and can't do while transformed, including whether it can still cast spells.",
+    "expected_outcome": "The user learns Polymorph replaces the target's game statistics with the chosen Beast's stat block while keeping alignment, personality, Hit Points and Hit Dice, grants Temporary Hit Points equal to the new form's Hit Points, limits the target's actions to what its new anatomy allows, and explicitly prevents it from speaking or casting spells while transformed.",
+    "user_description": "A player weighing whether Polymorph is a good idea for a spellcasting ally.",
+    "turns": [
+      {"role": "user", "content": "If I Polymorph our cleric into a bear, can they still cast spells while transformed?"}
+    ],
+    "comments": "Grounding check on Polymorph's explicit can't-speak-or-cast-spells clause."
+  },
+  {
+    "name": "teleport-mishap-risk",
+    "scenario": "A wizard wants to know what happens if their Teleport spell goes wrong, since they're only 'seen casually' familiar with the destination.",
+    "expected_outcome": "The user learns Teleport's outcome depends on familiarity with the destination per the Teleportation Outcome table, and that for a destination the caster has only seen casually, there's a chance of Mishap, Similar Area, Off Target, or On Target results, including that a Mishap deals 3d10 Force damage to each teleporting creature and rerolls the outcome, possibly repeatedly.",
+    "user_description": "A wizard player nervous about teleporting the party to a place they don't know well.",
+    "turns": [
+      {"role": "user", "content": "I only know our destination because I saw it casually once. What's the actual risk if I cast Teleport there?"}
+    ],
+    "comments": "Grounding check on the Teleportation Outcome table and Mishap consequences."
+  },
+  {
+    "name": "wish-freeform-stress",
+    "scenario": "A player's wizard wants to Wish for something not covered by the spell's listed effects and asks what the consequences would be.",
+    "expected_outcome": "The user learns that using Wish to produce an effect other than duplicating another spell of 8th level or lower carries stress: after enduring it, each spell the caster casts until finishing a Long Rest deals 1d10 Necrotic damage per level of that spell to the caster, the caster's Strength score becomes 3 for 2d4 days, remaining recovery time from resting decreases more slowly, and there's a 33 percent chance the caster can never cast Wish again.",
+    "user_description": "A player about to attempt a risky, open-ended Wish and wants to know what they're risking.",
+    "turns": [
+      {"role": "user", "content": "If I use Wish to do something that isn't just copying another spell, what are the actual consequences to my character?"}
+    ],
+    "comments": "Grounding check on Wish's stress penalties for freeform wishes."
+  },
+  {
+    "name": "command-options",
+    "scenario": "A cleric player wants to know what one-word commands they can choose when casting Command and what each one does.",
+    "expected_outcome": "The user learns Command lets the caster choose one of five one-word commands - Approach, Drop, Flee, Grovel, or Halt - each with a specific listed effect on the target if it fails its Wisdom saving throw.",
+    "user_description": "A cleric player picking a tactical option for their 1st-level spell slot.",
+    "turns": [
+      {"role": "user", "content": "What are all the possible commands I can give with the Command spell, and what does each one actually do?"}
+    ],
+    "comments": "Grounding check on Command's five listed one-word options."
+  },
+  {
+    "name": "banishment-plane-of-origin",
+    "scenario": "A player wants to know whether Banishment permanently gets rid of an Elemental enemy or just temporarily removes it.",
+    "expected_outcome": "The user learns Banishment forces a Charisma save or the target is transported to a harmless demiplane for the spell's duration, up to 1 minute, but if the target is an Aberration, Celestial, Elemental, Fey, or Fiend and the spell lasts the full minute, the target doesn't return and is instead sent to a plane associated with its creature type, DM's choice.",
+    "user_description": "A player deciding whether Banishment is a good way to permanently deal with an Elemental.",
+    "turns": [
+      {"role": "user", "content": "If I cast Banishment on an Elemental and manage to hold Concentration for the whole duration, does it come back afterward?"}
+    ],
+    "comments": "Grounding check on Banishment's creature-type-dependent permanence clause."
+  },
+  {
+    "name": "divine-word-hp-thresholds",
+    "scenario": "A cleric player wants to know exactly what happens to a badly wounded enemy if they cast Divine Word on it.",
+    "expected_outcome": "The user learns Divine Word forces a Charisma saving throw, and on a failed save the effect depends on the target's current Hit Points per the Divine Word Effects table: 0-20 HP the target dies, 21-30 HP it has Blinded, Deafened, and Stunned for 1 hour, 31-40 HP it has Blinded and Deafened for 10 minutes, 41-50 HP it has Deafened for 1 minute, and that a failing Celestial, Elemental, Fey, or Fiend target is also forced back to its plane of origin.",
+    "user_description": "A cleric player checking exact thresholds before casting a powerful spell on a nearly-dead enemy.",
+    "turns": [
+      {"role": "user", "content": "If I cast Divine Word on an enemy that has 25 Hit Points left, what happens to it exactly?"}
+    ],
+    "comments": "Table-lookup precision check: Divine Word's Hit-Point-threshold effects table."
+  },
+  {
+    "name": "concentration-two-spells-not-covered",
+    "scenario": "A player asks whether they can maintain Concentration on two different spells, like Haste and Bless, at the same time.",
+    "expected_outcome": "The assistant should recognize that the general rule for Concentration limits (only one Concentration spell active at a time) is not part of the provided D&D Free Rules spell descriptions context, and should say it doesn't have that information rather than guessing or inventing an answer.",
+    "user_description": "A player who assumes any rules question can be answered from the provided material.",
+    "turns": [
+      {"role": "user", "content": "Can I concentrate on both Haste and Bless at the same time if I have two spell slots free?"}
+    ],
+    "comments": "Honesty/no-hallucination test: the general Concentration rule isn't in this spells-only document."
+  },
+  {
+    "name": "opportunity-attacks-not-covered",
+    "scenario": "A player new to combat asks how opportunity attacks work in D&D.",
+    "expected_outcome": "The assistant should recognize that opportunity attack rules are a general combat rule, not part of the provided spell descriptions context, and should say it doesn't have that information rather than inventing combat rules.",
+    "user_description": "A new player trying to learn basic combat mechanics.",
+    "turns": [
+      {"role": "user", "content": "How do opportunity attacks work? What triggers one?"}
+    ],
+    "comments": "Honesty/no-hallucination test: combat rules aren't covered by this spells-only document."
+  },
+  {
+    "name": "action-surge-not-covered",
+    "scenario": "A player asks how the Fighter's Action Surge class feature works.",
+    "expected_outcome": "The assistant should recognize that class features like Action Surge aren't part of the provided spell descriptions context, and should say it doesn't have that information rather than fabricating class feature rules.",
+    "user_description": "A player building a Fighter character and asking about class features.",
+    "turns": [
+      {"role": "user", "content": "How does the Fighter's Action Surge feature work, and how many times can I use it?"}
+    ],
+    "comments": "Honesty/no-hallucination test: class features aren't covered by this spells-only document."
+  },
+  {
+    "name": "multiclass-spell-slots-not-covered",
+    "scenario": "A player multiclassing between Wizard and Cleric asks how their spell slots are calculated.",
+    "expected_outcome": "The assistant should recognize that multiclass spellcasting slot rules aren't part of the provided spell descriptions context, and should say it doesn't have that information rather than guessing at multiclassing rules.",
+    "user_description": "A player planning a multiclass build and looking for the slot-calculation rule.",
+    "turns": [
+      {"role": "user", "content": "I'm multiclassing Wizard 3 / Cleric 2. How do I calculate my spell slots?"}
+    ],
+    "comments": "Honesty/no-hallucination test: multiclassing rules aren't covered by this spells-only document."
+  },
+  {
+    "name": "prestidigitation-plus-cantrip-count-mixed-scope",
+    "scenario": "A player asks about both the mechanical effect of Prestidigitation and a general question about how many cantrips a Wizard knows, in the same message.",
+    "expected_outcome": "The assistant should correctly describe Prestidigitation's listed effects, grounded in the provided context, while separately recognizing that how many cantrips a Wizard knows is a class-feature rule not covered by the provided spell descriptions, and should say it doesn't have that information for that part instead of guessing.",
+    "user_description": "A new player who doesn't distinguish between spell rules and class rules.",
+    "turns": [
+      {"role": "user", "content": "What can Prestidigitation actually do, and by the way how many cantrips does a Wizard know at 1st level?"}
+    ],
+    "comments": "Mixed-scope test: correct grounded answer for the spell, honest decline for the out-of-scope class-feature question, within a single turn."
+  }
+]
