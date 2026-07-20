@@ -2,7 +2,7 @@ from project.adapters.routers.AnswerRouter import AnswerRouter
 from project.adapters.routers.ChatRouter import ChatRouter
 
 from project.adapters.Settings import Settings
-from project.adapters.answerers.OpenAILLM import OpenAILLM
+from project.adapters.answerers.MaritacaLLM import MaritacaLLM
 
 from project.adapters.enrichers.VectorDatabaseEnricher import (
     VectorDatabaseEnricher,
@@ -28,7 +28,7 @@ def _inject_routers(
 @asynccontextmanager
 async def _setup(api: FastAPI, settings: Settings):
     context_enricher = VectorDatabaseEnricher()
-    llm_answerer = OpenAILLM()
+    llm_answerer = MaritacaLLM()
     template = AnswerEnricher()
     chat_repository = ChatRepository()
     service = ChatService(

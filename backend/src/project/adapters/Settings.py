@@ -12,6 +12,7 @@ class ProjectSettings(BaseSettings):
 
 class SecurityVariables(ProjectSettings):
     OPENAI_API_KEY: str
+    MARITACA_API_KEY: str
     LANGCHAIN_API_KEY: str
 
 
