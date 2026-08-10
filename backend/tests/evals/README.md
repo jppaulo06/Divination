@@ -152,8 +152,14 @@ tier with higher rate limits.
 - `FaithfulnessMetric` — the answer must be grounded in the retrieved D&D
   rules chunks for that question.
 - `AnswerRelevancyMetric` — the answer actually addresses the question asked.
+  Skipped for `-not-covered` goldens (`NOT_COVERED_METRICS`): for those,
+  correctly declining to answer *is* the expected behavior, and this metric
+  scores low whenever the response doesn't directly answer the literal
+  question — it would penalize the correct behavior.
 - `Rules Correctness` (`GEval`) — the answer's facts (dice, numbers,
-  conditions) match `expected_outcome` without contradicting it.
+  conditions) match `expected_outcome` without contradicting it; for
+  `-not-covered` goldens this is what actually checks that declining was
+  the right call.
 
 `metrics.py` (conversational suite):
 - `TurnFaithfulnessMetric` — answers must be grounded in the D&D rules chunks

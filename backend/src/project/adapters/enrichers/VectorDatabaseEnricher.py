@@ -1,3 +1,5 @@
+import shutil
+
 from project.ports.enrichers.ContextEnricher import ContextEnricher
 
 from langchain_chroma import Chroma
@@ -17,10 +19,18 @@ class VectorDatabaseEnricher(ContextEnricher):
         )
         splits = text_splitter.split_documents(documento)
 
+        # Rebuilt from the source PDF on every startup, so the persisted
+        # collection must be cleared first - otherwise every restart (or
+        # any new process constructing this class) re-adds all chunks with
+        # fresh random IDs, and the collection grows with duplicates,
+        # degrading retrieval quality.
+        persist_directory = "../database/chroma_db"
+        shutil.rmtree(persist_directory, ignore_errors=True)
+
         self.vectorstore = Chroma.from_documents(
             documents=splits,
             embedding=OpenAIEmbeddings(),
-            persist_directory="../database/chroma_db",
+            persist_directory=persist_directory,
             collection_name="vector_database",
         )
 
