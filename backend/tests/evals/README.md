@@ -1,12 +1,18 @@
 # DeepEval suite
 
-Multi-turn eval suite for the Divination chatbot (`chatbot_app.py` wires the
-real `ChatService` — same retriever, prompts, and LLM as the API).
+Eval suite for the Divination chatbot (`chatbot_app.py` wires the real
+`ChatService` — same retriever, prompts, and LLM as the API). Two suites:
+`test_answer_unit.py` (single-turn, fast) and `test_divination_chat.py`
+(multi-turn, simulated, slower — see "Run the evals" sections below for
+each).
 
-The chat LLM (app and simulated users) is Maritaca's `sabia-4`; the DeepEval
-judge (metrics scoring) is `sabiazinho-4` (`eval_model.py`) — both via
-Maritaca's OpenAI-compatible endpoint (`https://chat.maritaca.ai/api`).
-Embeddings (`VectorDatabaseEnricher`) still use OpenAI directly — Maritaca
+The chat LLM (app and simulated users) and the DeepEval judge (metrics
+scoring, `eval_model.py`) both run on Maritaca's `sabia-4`, via Maritaca's
+OpenAI-compatible endpoint (`https://chat.maritaca.ai/api`). The judge
+originally used the smaller `sabiazinho-4`, but it periodically returned
+malformed JSON for DeepEval's structured schema prompts and aborted the
+whole run with no retry — see `eval_model.py`'s docstring.
+Embeddings (`VectorDatabaseEnricher`) use OpenAI directly — Maritaca
 doesn't offer an embeddings model.
 
 ## Setup
@@ -20,9 +26,8 @@ poetry install --with dev
 
 `backend/.env` needs:
 - `MARITACA_API_KEY` — already set.
-- `OPENAI_API_KEY` — still a placeholder; needs a real key for embeddings
-  (`VectorDatabaseEnricher`) to work at all, app and evals both build the
-  vector store on startup.
+- `OPENAI_API_KEY` — needed for embeddings (`VectorDatabaseEnricher`); app
+  and evals both build the vector store on startup.
 - `LANGCHAIN_API_KEY` — unrelated LangSmith tracing, unchanged.
 
 ## 1. The dataset (`tests/evals/.dataset.json`)
@@ -59,7 +64,7 @@ doesn't put it in shell history):
 
 ```bash
 poetry run deepeval set-local-model \
-  --model=sabiazinho-4 \
+  --model=sabia-4 \
   --base-url="https://chat.maritaca.ai/api" \
   --prompt-api-key \
   --save
@@ -83,12 +88,39 @@ poetry run deepeval generate \
 
 Review the output before merging it into `.dataset.json`.
 
-## 2. Run the evals
+## 2. Single-turn unit tests (`test_answer_unit.py`)
+
+DeepEval's `LLMTestCase` (as opposed to the `ConversationalTestCase` the
+suite below uses) is what DeepEval itself calls "unit testing for LLMs":
+one known question in, one known expected answer checked against, no
+`ConversationSimulator` and no simulated user turns. `test_answer_unit.py`
+reuses each golden's opening question (`turns[0]`) and `expected_outcome`
+directly — one `LLMTestCase` per golden, scored by `single_turn_metrics.py`
+(`FaithfulnessMetric`, `AnswerRelevancyMetric`, and a `GEval` for factual
+correctness against `expected_outcome`). Much cheaper and faster than the
+conversational suite (one chatbot call + one judge pass per metric, vs. up
+to 6 simulated turns), so it's the one to run on every change; save the
+conversational suite for less frequent, deeper checks.
+
+```bash
+poetry run deepeval test run tests/evals/test_answer_unit.py \
+  --identifier "unit-answers-round-1" \
+  --num-processes 3 \
+  --ignore-errors \
+  --skip-on-missing-params
+```
+
+No `ConversationSimulator` here, so no eager collection-time simulation
+and no cross-worker multiplication — `--num-processes` parallelizes test
+*execution* the normal pytest-xdist way, and a few workers is safe under
+Maritaca's rate limit (unlike the conversational suite, see below).
+
+## 3. Multi-turn conversational suite (`test_divination_chat.py`)
 
 ```bash
 poetry run deepeval test run tests/evals/test_divination_chat.py \
   --identifier "iterating-on-rag-grounding-round-1" \
-  --num-processes 5 \
+  --num-processes 1 \
   --ignore-errors \
   --skip-on-missing-params
 ```
@@ -98,8 +130,32 @@ judge model explicitly in Python and both `metrics.py` and
 `test_divination_chat.py` pass it in (`model=`/`simulator_model=`), so it
 works regardless of whatever global CLI config is or isn't set.
 
-## What's being checked (`metrics.py`)
+### Concurrency is capped for Maritaca's rate limit
 
+`simulator.simulate(...)` runs eagerly at module-collection time (it builds
+the `@pytest.mark.parametrize` argument), so pytest-xdist workers each
+re-trigger it independently — `--num-processes N` multiplies the concurrent
+API load by N, not just the test execution. Combined with
+`ConversationSimulator`'s own internal concurrency (5 conversations at once
+by default), this blew through Maritaca's rate limit (128k input
+tokens/min) within seconds and failed collection entirely with a
+`RateLimitError`. `test_divination_chat.py` now passes `max_concurrent=1` to
+`ConversationSimulator` to serialize conversation simulation; keep
+`--num-processes 1` too, since xdist's per-worker re-collection would
+undo that. This makes the run slower (conversations simulate one at a
+time) but reliable — this can be revisited if Maritaca's account moves to a
+tier with higher rate limits.
+
+## What's being checked
+
+`single_turn_metrics.py` (unit suite):
+- `FaithfulnessMetric` — the answer must be grounded in the retrieved D&D
+  rules chunks for that question.
+- `AnswerRelevancyMetric` — the answer actually addresses the question asked.
+- `Rules Correctness` (`GEval`) — the answer's facts (dice, numbers,
+  conditions) match `expected_outcome` without contradicting it.
+
+`metrics.py` (conversational suite):
 - `TurnFaithfulnessMetric` — answers must be grounded in the D&D rules chunks
   actually retrieved for that turn (catches hallucinated rules/costs/stats).
 - `ConversationCompletenessMetric` — the conversation resolves what the user
