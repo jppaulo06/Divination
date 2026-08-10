@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pipx install poetry==1.6.1
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: backend/.venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+
+      - name: Configure Poetry to use in-project venv
+        run: poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Ruff lint
+        run: poetry run ruff check .
+
+  unit-evals:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pipx install poetry==1.6.1
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: backend/.venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+
+      - name: Configure Poetry to use in-project venv
+        run: poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      # Settings.load() requires the API section too, even though the
+      # eval suite only exercises the security keys. HOST/PORT/ALLOWED_*
+      # aren't secret, so they're hardcoded here instead of stored as
+      # GitHub secrets.
+      - name: Write .env for tests
+        run: |
+          cat <<EOF > .env
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          MARITACA_API_KEY=${{ secrets.MARITACA_API_KEY }}
+          LANGCHAIN_API_KEY=${{ secrets.LANGCHAIN_API_KEY }}
+          HOST=0.0.0.0
+          PORT=8000
+          ALLOWED_ORIGINS=["http://localhost:3000"]
+          ALLOWED_METHODS=["GET","POST"]
+          ALLOWED_HEADERS=["*"]
+          EOF
+
+      - name: Run single-turn eval unit tests
+        run: >
+          poetry run deepeval test run tests/evals/test_answer_unit.py
+          --identifier "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
+          --num-processes 3
+          --ignore-errors
+          --skip-on-missing-params
