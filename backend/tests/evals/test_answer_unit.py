@@ -15,7 +15,7 @@ import pytest
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase
 
-from single_turn_metrics import SINGLE_TURN_METRICS
+from single_turn_metrics import NOT_COVERED_METRICS, SINGLE_TURN_METRICS
 
 chatbot_app = import_module("chatbot_app")
 
@@ -41,4 +41,9 @@ def test_single_turn_answer(golden):
         expected_output=golden["expected_outcome"],
     )
 
-    assert_test(test_case=test_case, metrics=SINGLE_TURN_METRICS)
+    metrics = (
+        NOT_COVERED_METRICS
+        if "not-covered" in golden["name"]
+        else SINGLE_TURN_METRICS
+    )
+    assert_test(test_case=test_case, metrics=metrics)

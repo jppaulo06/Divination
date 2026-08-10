@@ -27,3 +27,13 @@ SINGLE_TURN_METRICS = [
     AnswerRelevancyMetric(model=maritaca_judge),
     _CORRECTNESS_GEVAL,
 ]
+
+# For "-not-covered" goldens, correctly declining to answer IS the expected
+# behavior - AnswerRelevancyMetric penalizes exactly that (it scores low
+# whenever the response doesn't directly answer the literal question), so
+# it's the wrong check here. Rules Correctness (GEval, judged against
+# expected_outcome) already captures whether declining was the right call.
+NOT_COVERED_METRICS = [
+    FaithfulnessMetric(model=maritaca_judge),
+    _CORRECTNESS_GEVAL,
+]
