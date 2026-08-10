@@ -21,9 +21,23 @@ uvicorn = "^0.32.0"
 
 [tool.poetry.group.dev.dependencies]
 deepeval = "^4.1.1"
+ruff = ">=0.6.0"
 
 [tool.ruff]
 line-length = 79
+
+[tool.ruff.lint]
+# Conservative default (unused imports, undefined names, syntax errors) —
+# the codebase has no prior ruff history, so broader style rule sets
+# (import sorting, naming, formatting-adjacent) would fail on unrelated
+# pre-existing code rather than catch real bugs.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# load_dotenv() must run before importing modules that read env vars at
+# import time (Settings, adapters) — imports-not-at-top is intentional.
+"src/project/main.py" = ["E402"]
+"tests/evals/chatbot_app.py" = ["E402"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
