@@ -1,7 +1,6 @@
 from project.ports.answerers.LLMAnswerer import LLMAnswerer
 from project.core.RagChain import RagChain
 from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
 from langchain.chains import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 import os
@@ -67,10 +66,6 @@ class MaritacaLLM(LLMAnswerer):
         settings,
         callbacks=None,
     ):
-        load_dotenv()
-        # Embeddings (VectorDatabaseEnricher) still use OpenAI directly, so
-        # this key needs to stay in the process environment.
-        os.environ["OPENAI_API_KEY"] = settings.security.OPENAI_API_KEY
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"] = settings.security.LANGCHAIN_API_KEY
 

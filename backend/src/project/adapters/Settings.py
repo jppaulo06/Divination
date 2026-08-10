@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic.networks import AnyHttpUrl, IPvAnyAddress
-from typing_extensions import Literal
 from pydantic.types import PositiveInt
 from pydantic import AliasChoices, Field
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ class SecurityVariables(ProjectSettings):
 class APIVariables(ProjectSettings):
     port: PositiveInt = Field(validation_alias=AliasChoices("api_port", "port"))
     host: AnyHttpUrl | IPvAnyAddress
-    allowed_origins: list[AnyHttpUrl | Literal["*"]]
+    allowed_origins: list[str]
     allowed_methods: list[str]
     allowed_headers: list[str]
 

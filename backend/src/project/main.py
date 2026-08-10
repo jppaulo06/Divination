@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from project.adapters.routers.AnswerRouter import AnswerRouter
 from project.adapters.routers.ChatRouter import ChatRouter
 

@@ -17,6 +17,7 @@ python-dotenv = "^1.0.1"
 fastapi = "^0.115.2"
 pypdf = "^5.1.0"
 onnxruntime = ">=1.14.0,<1.24"
+uvicorn = "^0.32.0"
 
 [tool.poetry.group.dev.dependencies]
 deepeval = "^4.1.1"
