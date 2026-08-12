@@ -1,33 +1,115 @@
 ###################################################################
 #                                                                 #
-#  This docker-compose.yaml file comprehends 1 profiles           #
+#  Two profiles:                                                  #
 #                                                                 #
-#  - project:     Run backend with frontend                       #
+#  - dev:   hot reload on both sides. Source is bind-mounted,      #
+#           vite serves the frontend, uvicorn --reload the API.    #
+#  - prod:  production build. The frontend is compiled and served  #
+#           as static files by nginx; no source is mounted.        #
 #                                                                 #
-#  To setup a specific profile, run:                              #
-#  docker-compose --profile <profile> up -d                       #
+#  docker compose --profile dev up --build                         #
+#  docker compose --profile prod up --build                        #
+#                                                                 #
+#  Every service belongs to a profile, so plain `docker compose    #
+#  up` starts nothing — pick one.                                  #
 #                                                                 #
 #  More information at https://docs.docker.com/compose/profiles/  #
 #                                                                 #
 ###################################################################
 
+# Shared API environment. Merged inside `environment:` (not at service
+# level) so a service can add keys without dropping these.
+x-api-env: &api-env
+  MONITORING_DATABASE_URL: >-
+    postgresql+psycopg://divination:divination@db:5432/divination
+
+x-api-common: &api-common
+  env_file:
+    - "./backend/.env"
+  depends_on:
+    db:
+      condition: service_healthy
+
 services:
-  front:
+  # ------------------------------- dev -------------------------------
+  front-dev:
+    profiles: ["dev"]
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      target: dev
     ports:
       - "3000:3000"
     volumes:
       - ./frontend/:/app
-      - /app/node_modules
+      # Named so it can be dropped explicitly when dependencies change:
+      #   docker volume rm divination_front_node_modules
+      # Without this, the bind mount above would hide the image's
+      # node_modules and vite would not start.
+      - front_node_modules:/app/node_modules
+    environment:
+      VITE_BACKEND_URL: http://localhost:8000
 
-  api:
+  api-dev:
+    <<: *api-common
+    profiles: ["dev"]
     build:
       context: ./backend
+      target: dev
     ports:
       - "8000:8000"
     volumes:
       - ./backend/:/usr/src
-    env_file:
-      - "./backend/.env"
+    environment:
+      <<: *api-env
+
+  # ------------------------------ prod -------------------------------
+  front:
+    profiles: ["prod"]
+    build:
+      context: ./frontend
+      target: prod
+      args:
+        # Baked into the bundle at build time. Change this (and the API's
+        # ALLOWED_ORIGINS below) when deploying anywhere but localhost.
+        VITE_BACKEND_URL: http://localhost:8000
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+  api:
+    <<: *api-common
+    profiles: ["prod"]
+    build:
+      context: ./backend
+      target: prod
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *api-env
+      # The prod frontend is served on :8080, which is a different origin
+      # from the :3000 in backend/.env — without this the browser would
+      # block every request as a CORS failure.
+      ALLOWED_ORIGINS: '["http://localhost:8080"]'
+
+  # ------------------------------ shared -----------------------------
+  db:
+    profiles: ["dev", "prod"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: divination
+      POSTGRES_PASSWORD: divination
+      POSTGRES_DB: divination
+    ports:
+      - "5432:5432"
+    volumes:
+      - monitoring_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U divination -d divination"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  monitoring_data:
+  front_node_modules:
