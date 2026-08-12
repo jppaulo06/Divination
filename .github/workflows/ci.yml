@@ -40,6 +40,36 @@ jobs:
       - name: Ruff lint
         run: poetry run ruff check .
 
+  monitoring-tests:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pipx install poetry==1.6.1
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: backend/.venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+
+      - name: Configure Poetry to use in-project venv
+        run: poetry config virtualenvs.in-project true
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      # Offline and deterministic: detectors are pure functions and the
+      # store tests use in-memory SQLite, so no API keys are needed.
+      - name: Run monitoring tests
+        run: poetry run pytest tests/monitoring -q
+
   unit-evals:
     needs: lint
     runs-on: ubuntu-latest

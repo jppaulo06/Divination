@@ -1,6 +1,13 @@
+import hashlib
+
 from project.ports.enrichers.TemplateEnricher import TemplateEnricher
 from typing import Optional
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+TEMPLATE_PATHS = {
+    "default": "src/project/database/templates/defaultTemplate.txt",
+    "creative": "src/project/database/templates/creativeTemplate.txt",
+}
 
 
 class AnswerEnricher(TemplateEnricher):
@@ -9,6 +16,9 @@ class AnswerEnricher(TemplateEnricher):
         template: Optional[str] = None,
         history_template: Optional[str] = None,
     ):
+        # Which template is live; change_template() rewrites it.
+        self.name = "default" if template is None else "custom"
+
         if template is None:
             with open(
                 "src/project/database/templates/defaultTemplate.txt", "r"
@@ -46,14 +56,16 @@ class AnswerEnricher(TemplateEnricher):
         )
         return custom_template
 
+    def template_hash(self) -> str:
+        """Short digest of the live template text."""
+        digest = hashlib.sha256(self.template.encode("utf-8"))
+        return digest.hexdigest()[:12]
+
     def change_template(self, new_template):
-        path = ""
-        if new_template == "default":
-            path = "src/project/database/templates/defaultTemplate.txt"
-        elif new_template == "creative":
-            path = "src/project/database/templates/creativeTemplate.txt"
-        else:
+        path = TEMPLATE_PATHS.get(new_template)
+        if path is None:
             return "personalidade não encontrada"
         print("path de personalidade atual:" + path)
         with open(path) as new_personality:
             self.template = new_personality.read()
+        self.name = new_template
