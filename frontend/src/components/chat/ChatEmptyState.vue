@@ -18,7 +18,7 @@ const SUGGESTIONS = [
     <h2 class="empty__title">Consulte o oráculo</h2>
     <p class="empty__lead">
       Pergunte sobre as regras de D&amp;D e a resposta vem fundamentada nas
-      Free Rules&nbsp;(2024), recuperadas por RAG.
+      Free Rules&nbsp;(2024).
     </p>
 
     <div class="empty__suggestions">

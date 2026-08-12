@@ -4,10 +4,14 @@ import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
 
-export const DARK_THEME = 'divinationDark'
-export const LIGHT_THEME = 'divinationLight'
+const DARK_THEME = 'divinationDark'
 
 /**
+ * The app ships a single dark palette by design — there is no light
+ * counterpart and no toggle. Components read these through the generated
+ * --v-theme-* custom properties rather than hardcoding colour, so a
+ * second theme could be reintroduced here without touching them.
+ *
  * Dark "arcane manuscript" palette: violet-ink surfaces lit by gold.
  * Surfaces climb in luminance as they come forward (background ->
  * surface -> surface-bright) so elevation reads without heavy shadows.
@@ -40,33 +44,6 @@ const divinationDark = {
   },
 }
 
-/** Daylight counterpart: aged parchment rather than plain white. */
-const divinationLight = {
-  dark: false,
-  colors: {
-    background: '#F3EDE1',
-    surface: '#FDFAF3',
-    'surface-bright': '#FFFFFF',
-    'surface-light': '#F8F3E8',
-    'surface-variant': '#E7DECA',
-    'on-surface-variant': '#4A4033',
-    primary: '#8A6A16',
-    'primary-darken-1': '#6B5210',
-    secondary: '#6338D6',
-    'secondary-darken-1': '#4E27B4',
-    error: '#C4362C',
-    info: '#2A6F8E',
-    success: '#3B7A52',
-    warning: '#A5701F',
-  },
-  variables: {
-    'border-color': '#6B5210',
-    'border-opacity': 0.18,
-    'high-emphasis-opacity': 0.92,
-    'medium-emphasis-opacity': 0.68,
-  },
-}
-
 export default createVuetify({
   icons: {
     defaultSet: 'mdi',
@@ -77,7 +54,6 @@ export default createVuetify({
     defaultTheme: DARK_THEME,
     themes: {
       [DARK_THEME]: divinationDark,
-      [LIGHT_THEME]: divinationLight,
     },
   },
   // Component-wide defaults keep radii and weights consistent without
@@ -96,6 +72,5 @@ export default createVuetify({
     },
     VCard: { rounded: 'lg' },
     VList: { density: 'comfortable' },
-    VTooltip: { location: 'bottom' },
   },
 })

@@ -135,6 +135,44 @@ describe('ChatShell', () => {
     expect(wrapper.find('.composer__send').attributes('disabled')).toBeUndefined()
   })
 
+  it('ships a single dark theme with no toggle', async () => {
+    const wrapper = mountShell()
+    await flushPromises()
+
+    expect(wrapper.find('.v-theme--divinationDark').exists()).toBe(true)
+    expect(wrapper.html()).not.toContain('mdi-white-balance-sunny')
+    expect(wrapper.html()).not.toContain('mdi-weather-night')
+  })
+
+  it('places the personality control in the composer, not the app bar', async () => {
+    const wrapper = mountShell()
+    await flushPromises()
+
+    expect(wrapper.find('.composer .personality__activator').exists()).toBe(
+      true,
+    )
+    expect(wrapper.find('.v-app-bar .personality__activator').exists()).toBe(
+      false,
+    )
+    // The app bar keeps only identity and the drawer toggle.
+    expect(wrapper.find('.v-app-bar .v-app-bar-nav-icon').exists()).toBe(true)
+  })
+
+  it('toggles the conversation drawer', async () => {
+    const wrapper = mountShell()
+    await flushPromises()
+
+    const toggle = wrapper.find('.v-app-bar-nav-icon')
+    expect(toggle.exists()).toBe(true)
+
+    const before = toggle.attributes('aria-expanded')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).not.toBe(before)
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe(before)
+  })
+
   it('lists restored conversations by their opening question', async () => {
     api.listChats.mockResolvedValue({
       a: { messages: [{ type: 'human', content: 'Regras de conjuração' }] },

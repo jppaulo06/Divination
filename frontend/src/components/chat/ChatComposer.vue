@@ -1,11 +1,15 @@
 <script setup>
 import { computed, ref } from 'vue'
 
+import PersonalityMenu from './PersonalityMenu.vue'
+
 const props = defineProps({
   isSending: { type: Boolean, default: false },
+  personality: { type: String, required: true },
+  isChangingPersonality: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'change-personality'])
 
 const draft = ref('')
 const field = ref(null)
@@ -30,6 +34,15 @@ defineExpose({ fill })
 <template>
   <div class="composer">
     <div class="composer__inner">
+      <!-- No class here on purpose: VMenu's root is a fragment, so an
+           inherited class is silently dropped rather than applied. -->
+      <PersonalityMenu
+        compact
+        :personality="personality"
+        :is-changing="isChangingPersonality"
+        @change="emit('change-personality', $event)"
+      />
+
       <v-textarea
         ref="field"
         v-model="draft"
@@ -55,10 +68,6 @@ defineExpose({ fill })
         @click="submit"
       />
     </div>
-
-    <p class="composer__hint">
-      <kbd>Enter</kbd> envia · <kbd>Shift</kbd>+<kbd>Enter</kbd> quebra linha
-    </p>
   </div>
 </template>
 
@@ -68,46 +77,45 @@ defineExpose({ fill })
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
-  padding: 10px 20px 14px;
+  /* Generous bottom gap so the field reads as sitting in the layout
+     rather than pinned to the window edge. */
+  padding: 12px 20px 32px;
 }
 
 .composer__inner {
   display: flex;
+  /* Bottom-aligned so the field can grow upward on multi-line input while
+     both buttons stay on the baseline. */
   align-items: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .composer__field {
   flex: 1 1 auto;
 }
 
-.composer__send {
-  margin-bottom: 4px;
-}
-
-.composer__hint {
-  margin: 8px 0 0;
-  font-size: 0.7rem;
-  text-align: center;
-  opacity: 0.45;
-}
-
-.composer__hint kbd {
-  font-family: inherit;
-  font-size: 0.68rem;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(var(--v-border-color), 0.12);
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
+/*
+ * Heights are left to Vuetify's size props rather than hand-set, because
+ * an icon button resolves to --v-btn-height + 12px:
+ *
+ *   send  -> size="large"  = 44 + 12 = 56px, matching the field's
+ *            --v-input-control-height of 56px
+ *   setting -> default size = 36 + 12 = 48px, deliberately smaller since
+ *            sending is the primary action and this is a setting
+ *
+ * The send button previously carried margin-bottom: 4px, which lifted it
+ * off the field's bottom edge; alignment now comes from flex-end alone.
+ */
 
 @media (max-width: 600px) {
   .composer {
-    padding: 8px 14px 12px;
+    /* Less than on desktop — vertical space is scarcer — but still clear
+       of the edge, plus any on-screen home indicator. */
+    padding: 10px 14px calc(20px + env(safe-area-inset-bottom));
   }
 
-  .composer__hint {
-    display: none;
+  .composer__inner {
+    gap: 4px;
   }
 }
 </style>

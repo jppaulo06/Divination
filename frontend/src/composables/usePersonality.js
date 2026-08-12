@@ -28,29 +28,28 @@ export function usePersonality() {
 
   const personality = ref(initial)
   const isChanging = ref(false)
-  const notice = ref('')
-  const noticeType = ref('success')
+  const error = ref('')
 
   async function setPersonality(value) {
     if (!value || value === personality.value || isChanging.value) return
     const previous = personality.value
     isChanging.value = true
+    error.value = ''
     try {
       await changeTemplate(value)
       personality.value = value
       localStorage.setItem(STORAGE_KEY, value)
-      const chosen = PERSONALITIES.find((item) => item.value === value)
-      noticeType.value = 'success'
-      notice.value = `Personalidade alterada para ${chosen.label.toLowerCase()}.`
+      // Success is deliberately silent: the menu's own checked state and
+      // the button label already show which personality is live.
     } catch (failure) {
-      // Keep the control showing what the backend actually has.
+      // A failure has to be reported, or the control would keep showing a
+      // personality the backend never accepted.
       personality.value = previous
-      noticeType.value = 'error'
-      notice.value = toErrorMessage(failure)
+      error.value = toErrorMessage(failure)
     } finally {
       isChanging.value = false
     }
   }
 
-  return { personality, isChanging, notice, noticeType, setPersonality }
+  return { personality, isChanging, error, setPersonality }
 }

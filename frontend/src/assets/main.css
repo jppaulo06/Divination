@@ -1,6 +1,40 @@
 @import './base.css';
 
 /*
+ * Atmospheric backdrop: the dragon art dimmed beneath a vignette.
+ *
+ * This is painted as the application's own background rather than as an
+ * overlay element. .v-main is not positioned, so any positioned overlay
+ * — even at z-index 0 — paints above it and hides the transcript.
+ *
+ * Background layers paint first-listed on top, so the dimming gradient
+ * leads and the photograph sits at the bottom of the stack.
+ */
+.v-application {
+  background-image:
+    linear-gradient(
+      to bottom,
+      rgba(var(--v-theme-background), 0.9),
+      rgba(var(--v-theme-background), 0.97)
+    ),
+    radial-gradient(
+      1100px 700px at 82% -8%,
+      rgba(var(--v-theme-secondary), 0.2),
+      transparent 62%
+    ),
+    radial-gradient(
+      900px 620px at 10% 105%,
+      rgba(var(--v-theme-primary), 0.13),
+      transparent 60%
+    ),
+    url('/dragon.jpg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center, center, center, center 22%;
+  background-attachment: fixed;
+}
+
+/*
  * Styling for sanitised markdown coming back from the model. These rules
  * are global on purpose: the HTML is injected with v-html, so scoped
  * selectors would never match it.
