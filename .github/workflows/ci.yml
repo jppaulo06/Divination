@@ -29,10 +29,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: backend/.venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
       - name: Configure Poetry to use in-project venv
         run: poetry config virtualenvs.in-project true
+
+      # Fails if poetry.lock no longer matches pyproject.toml, so a
+      # dependency edit committed without relocking is caught here rather
+      # than by an image build resolving to different versions.
+      - name: Check lock file is in sync
+        run: poetry check --lock
 
       - name: Install dependencies
         run: poetry install --with dev
@@ -57,7 +63,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: backend/.venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
       - name: Configure Poetry to use in-project venv
         run: poetry config virtualenvs.in-project true
@@ -87,7 +93,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: backend/.venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
       - name: Configure Poetry to use in-project venv
         run: poetry config virtualenvs.in-project true

@@ -25,8 +25,10 @@ WORKDIR /usr/src
 
 RUN pip install poetry==${POETRY_VERSION}
 
-# Only the manifest, so dependency layers survive source edits.
-COPY pyproject.toml ./
+# Only the manifests, so dependency layers survive source edits. The lock
+# file is required, not optional: without it Poetry re-resolves on every
+# build and two builds of the same commit can install different versions.
+COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root --only main
 
 EXPOSE 8000
