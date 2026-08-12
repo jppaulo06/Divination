@@ -2,6 +2,36 @@
 
 Registro do trabalho de avaliação (DeepEval) feito no backend do Divination. Foco: os testes em si, o que eles encontraram, e o que passam a garantir contra regressão.
 
+## 2026-08-12 — Camada de monitoramento (CD4AI estágio 2)
+
+Ver `MONITORING.md` para o detalhamento do design, como rodar e as lacunas conhecidas.
+
+### O que foi construído
+
+- **Primeira base de dados do projeto.** Até aqui não havia nenhuma persistência: `ChatRepository` é um dicionário em memória e o histórico morria com o processo (`chroma.sqlite3` é arquivo interno do Chroma, não banco da aplicação). Foram criadas 5 tabelas via SQLAlchemy — `interactions`, `retrieved_chunks`, `signals`, `feedback`, `curation_reviews` — com Postgres no `docker-compose` e fallback para SQLite quando `MONITORING_DATABASE_URL` não está definida (testes e scripts não precisam de container).
+- **Captura em caminho único.** `ChatService.get_answer` e `get_answer_with_context` passaram a compartilhar um único `_answer`. O caminho de produção agora carrega os documentos recuperados, que antes só o harness de eval via — sem eles, uma interação capturada nunca poderia virar teste de grounding, porque `FaithfulnessMetric` precisa de `retrieval_context`.
+- **Versionamento por interação.** Cada interação registra `template_name`, `template_hash`, `corpus_version` e `model`. `POST /v1/context` reescreve o prompt ativo em tempo de execução, então duas perguntas idênticas podem legitimamente gerar respostas diferentes; sem o stamp, regressão de prompt é indistinguível de ruído do modelo.
+- **Scores de retrieval.** `ScoredRetriever` substitui `as_retriever()`, que descartava os scores de similaridade. Sem eles o sinal mais barato e mais informativo de falha de RAG — "o melhor chunk era fraco" — não existe.
+- **Cinco detectores** offline e determinísticos (sem LLM, sem embeddings): `weak_retrieval`, `unsupported_claim`, `refusal_or_hedge`, `format_guardrail_violation`, `repeated_question`. Rodam como background task após a resposta e via `scripts/run_detectors.py` para recomputar o histórico.
+- **Endpoint de feedback** (`POST /v1/feedback`) e **inbox de curadoria** (`GET /v1/monitoring/candidates` e `/summary`).
+- **Gerador de tráfego sintético** (`scripts/generate_traffic.py` + banco de ~54 perguntas fora dos 25 goldens: spells não cobertos, regras fora de escopo, perguntas em português contra corpus em inglês, e prompts adversariais). Sem tráfego, a camada de monitoramento não sinaliza nada e não é demonstrável.
+- **66 testes** offline em `tests/monitoring/`, rodando no CI a cada PR sem precisar de chaves de API.
+
+### Decisões de design que importam
+
+- **`signals` é índice de seleção, não payload.** Um sinal é uma suspeita gerada por máquina sobre uma interação — não é veredito nem relatório de bug. O estágio otimiza **recall** e aceita falsos positivos de propósito; separar ruído de defeito real é trabalho da curadoria. A curadoria lê `interactions JOIN signals` mais os chunks, porque não se julga um `unsupported_claim` sem ver o que o modelo recebeu.
+- **Feedback negativo e seu sinal são gravados na mesma transação.** Todo outro sinal é derivado e recomputável: se um detector falhar, `interactions` + `retrieved_chunks` continuam sendo a fonte da verdade e basta rodar de novo. Um thumbs-down não: nenhum replay o reconstrói, porque a pessoa que o deu já foi embora. Por isso ele não é derivado por varredura posterior — feedback negativo sem sinal é impossível por construção.
+- **`feedback` é append-only.** Mudança de nota gera nova linha, então `details.feedback_id` sempre aponta para uma linha que ainda diz o que dizia quando o sinal foi levantado. Notas negativas repetidas preservam todas as avaliações mas geram um único sinal — um sinal já basta para enfileirar, e um segundo violaria a chave de unicidade e derrubaria a avaliação junto.
+- **"Aguardando revisão" é a ausência de linha em `curation_reviews`**, não uma coluna de status em `interactions`. Coluna de status duplicaria estado que a tabela de review já implica, e as duas divergiriam.
+- **Monitoramento nunca derruba produção.** `record_interaction` engole as próprias falhas e devolve `None`; banco inacessível degrada para "não está gravando" em vez de derrubar o chatbot. O feedback é a exceção deliberada: ele retorna erro, porque o dado é irrecuperável.
+- **A inserção da interação é síncrona**, os detectores não. A resposta carrega o `interaction_id` para o cliente anexar feedback, então a linha precisa existir antes do retorno; os detectores leem do banco depois e não custam latência ao usuário.
+
+### Imprecisões deliberadas
+
+- `unsupported_claim` sinaliza respostas corretas cujos números são **derivados**: Fireball em 5º nível é 10d6, que nunca aparece num corpus que diz "8d6 mais 1d6 por nível de espaço acima do 3º". Apertar o detector para calar esse caso custaria recall em alucinações reais.
+- `refusal_or_hedge` dispara majoritariamente em comportamento correto — o prompt manda admitir lacunas. O valor está no agregado: um agrupamento de recusas sobre um mesmo assunto é lacuna de cobertura do corpus.
+- O limiar de `weak_retrieval` (0.7) é **placeholder** e precisa ser calibrado contra a distribuição real de `retrieved_chunks.score`.
+
 ## 2026-08-10 — Suíte de testes com DeepEval
 
 ### 1. Os testes que implementamos

@@ -10,6 +10,8 @@ MARITACA_MODEL = "sabia-4"
 
 
 class MaritacaLLM(LLMAnswerer):
+    model_name = MARITACA_MODEL
+
     def get_answer(
         self,
         chat_id,

@@ -1,6 +1,11 @@
 .env
 .env.local
+.venv/
 __pycache__/
 *.pyc
 .deepeval/
 .pytest_cache/
+.ruff_cache/
+*.db
+*.db-wal
+*.db-shm
