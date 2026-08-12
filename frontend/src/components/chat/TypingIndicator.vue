@@ -5,8 +5,17 @@
     </div>
     <div class="typing__body">
       <div class="typing__meta">Divination</div>
-      <div class="typing__bubble">
-        <span class="typing__label">consultando as regras</span>
+      <!--
+        The dots are decorative, so the pending state is carried by
+        role="status" and its label. Without those, removing the visible
+        text would leave assistive technology with a CSS animation and no
+        way to know an answer is on the way.
+      -->
+      <div
+        class="typing__bubble"
+        role="status"
+        aria-label="Consultando as regras"
+      >
         <span class="typing__dots" aria-hidden="true">
           <i /><i /><i />
         </span>
@@ -48,17 +57,12 @@
 .typing__bubble {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  /* Dots are the only child now, so the bubble is a small pill rather
+     than a labelled row. */
   padding: 14px 18px;
   border-radius: 14px 14px 14px 4px;
   background: rgb(var(--v-theme-surface-light));
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.typing__label {
-  font-size: 0.875rem;
-  opacity: 0.7;
-  font-style: italic;
 }
 
 .typing__dots {
