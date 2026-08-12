@@ -8,10 +8,18 @@ const props = defineProps({
   canRetry: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['retry'])
+const emit = defineEmits(['retry', 'rate'])
 
 const isUser = computed(() => props.message.role === 'user')
 const failed = computed(() => Boolean(props.message.failed))
+
+// Only answers the monitoring layer recorded can be rated. Answers
+// restored from history carry no interactionId, because the chat history
+// endpoint returns the messages without them.
+const canRate = computed(
+  () => !isUser.value && !failed.value && Boolean(props.message.interactionId),
+)
+const rating = computed(() => props.message.rating)
 
 // User text is never treated as markup — it is bound as text, so a
 // question containing HTML shows up literally instead of executing.
@@ -56,7 +64,11 @@ async function copy() {
         <div v-else class="markdown" v-html="renderedHtml" />
       </div>
 
-      <div v-if="!isUser" class="message__actions">
+      <div
+        v-if="!isUser"
+        class="message__actions"
+        :class="{ 'message__actions--sticky': rating !== undefined }"
+      >
         <v-btn
           v-if="failed && canRetry"
           size="small"
@@ -67,15 +79,41 @@ async function copy() {
         >
           Tentar novamente
         </v-btn>
-        <v-btn
-          v-else-if="!failed"
-          size="small"
-          variant="text"
-          :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
-          @click="copy"
-        >
-          {{ copied ? 'Copiado' : 'Copiar' }}
-        </v-btn>
+        <template v-else-if="!failed">
+          <v-btn
+            size="small"
+            variant="text"
+            :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
+            @click="copy"
+          >
+            {{ copied ? 'Copiado' : 'Copiar' }}
+          </v-btn>
+
+          <template v-if="canRate">
+            <v-btn
+              size="small"
+              variant="text"
+              :icon="rating === 1 ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
+              :color="rating === 1 ? 'success' : undefined"
+              :loading="Boolean(message.isRating)"
+              aria-label="Resposta útil"
+              :aria-pressed="rating === 1"
+              @click="emit('rate', 1)"
+            />
+            <v-btn
+              size="small"
+              variant="text"
+              :icon="
+                rating === -1 ? 'mdi-thumb-down' : 'mdi-thumb-down-outline'
+              "
+              :color="rating === -1 ? 'error' : undefined"
+              :loading="Boolean(message.isRating)"
+              aria-label="Resposta incorreta ou pouco útil"
+              :aria-pressed="rating === -1"
+              @click="emit('rate', -1)"
+            />
+          </template>
+        </template>
       </div>
     </div>
   </div>
@@ -172,7 +210,10 @@ async function copy() {
 }
 
 .message:hover .message__actions,
-.message__actions:focus-within {
+.message__actions:focus-within,
+/* A rating that has been given stays visible, so the reader can see it
+   was recorded without hunting for it again. */
+.message__actions--sticky {
   opacity: 1;
 }
 

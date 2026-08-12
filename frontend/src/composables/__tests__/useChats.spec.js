@@ -10,6 +10,7 @@ vi.mock('@/services/api', async (importOriginal) => {
     listChats: vi.fn(),
     createChat: vi.fn(),
     askQuestion: vi.fn(),
+    sendFeedback: vi.fn(),
   }
 })
 
@@ -196,6 +197,81 @@ describe('useChats', () => {
 
       expect(api.askQuestion).not.toHaveBeenCalled()
       expect(chat.messages.value).toHaveLength(2)
+    })
+  })
+
+  describe('rateMessage', () => {
+    async function chatWithAnswer(interactionId = 'int-1') {
+      api.listChats.mockResolvedValue({})
+      api.createChat.mockResolvedValue('c1')
+      api.askQuestion.mockResolvedValue({ answer: 'resposta', interactionId })
+
+      const chat = useChats()
+      await chat.loadChats()
+      await chat.sendMessage('pergunta')
+      return chat
+    }
+
+    it('sends the rating and remembers it on the message', async () => {
+      api.sendFeedback.mockResolvedValue(7)
+      const chat = await chatWithAnswer()
+      const answer = chat.messages.value.at(-1)
+
+      await chat.rateMessage(answer, -1)
+
+      expect(api.sendFeedback).toHaveBeenCalledWith({
+        interactionId: 'int-1',
+        rating: -1,
+      })
+      expect(answer.rating).toBe(-1)
+      expect(answer.isRating).toBe(false)
+    })
+
+    it('ignores a second click on the same thumb', async () => {
+      api.sendFeedback.mockResolvedValue(1)
+      const chat = await chatWithAnswer()
+      const answer = chat.messages.value.at(-1)
+
+      await chat.rateMessage(answer, 1)
+      await chat.rateMessage(answer, 1)
+
+      expect(api.sendFeedback).toHaveBeenCalledTimes(1)
+    })
+
+    it('allows changing the rating, which the backend stores as a new row', async () => {
+      api.sendFeedback.mockResolvedValue(1)
+      const chat = await chatWithAnswer()
+      const answer = chat.messages.value.at(-1)
+
+      await chat.rateMessage(answer, -1)
+      await chat.rateMessage(answer, 1)
+
+      expect(api.sendFeedback).toHaveBeenCalledTimes(2)
+      expect(answer.rating).toBe(1)
+    })
+
+    it('does nothing for an answer with no interactionId', async () => {
+      const chat = await chatWithAnswer(null)
+      const answer = chat.messages.value.at(-1)
+
+      await chat.rateMessage(answer, -1)
+
+      expect(api.sendFeedback).not.toHaveBeenCalled()
+      expect(answer.rating).toBeUndefined()
+    })
+
+    it('surfaces a failure instead of pretending the rating was stored', async () => {
+      // A rating that fails to store cannot be reconstructed later, so it
+      // must not be swallowed the way interaction recording is.
+      api.sendFeedback.mockRejectedValue(new Error('down'))
+      const chat = await chatWithAnswer()
+      const answer = chat.messages.value.at(-1)
+
+      await chat.rateMessage(answer, -1)
+
+      expect(chat.error.value).toBeTruthy()
+      expect(answer.rating).toBeUndefined()
+      expect(answer.isRating).toBe(false)
     })
   })
 

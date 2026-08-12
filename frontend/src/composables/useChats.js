@@ -4,6 +4,7 @@ import {
   askQuestion,
   createChat,
   listChats,
+  sendFeedback,
   toErrorMessage,
 } from '@/services/api'
 import { toPlainText } from '@/utils/markdown'
@@ -137,6 +138,32 @@ export function useChats() {
     }
   }
 
+  /**
+   * Rates one answer, remembering the choice on the message.
+   *
+   * Changing an existing rating is allowed — the backend stores feedback
+   * append-only, so a flip records a second row rather than editing the
+   * first. Clicking the same thumb twice is ignored, so a stray double
+   * click does not post twice.
+   *
+   * Failures surface as an error: a lost rating is unrecoverable, unlike
+   * every other monitoring signal.
+   */
+  async function rateMessage(message, rating) {
+    if (!message?.interactionId) return
+    if (message.rating === rating || message.isRating) return
+
+    message.isRating = true
+    try {
+      await sendFeedback({ interactionId: message.interactionId, rating })
+      message.rating = rating
+    } catch (failure) {
+      error.value = toErrorMessage(failure)
+    } finally {
+      message.isRating = false
+    }
+  }
+
   /** Drops the failed turn and its question, then asks again. */
   async function retryLast() {
     const chat = currentChat.value
@@ -165,6 +192,7 @@ export function useChats() {
     startDraft,
     selectChat,
     sendMessage,
+    rateMessage,
     retryLast,
   }
 }
