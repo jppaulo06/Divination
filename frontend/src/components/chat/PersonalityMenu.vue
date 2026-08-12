@@ -6,6 +6,7 @@ import { PERSONALITIES } from '@/composables/usePersonality'
 const props = defineProps({
   personality: { type: String, required: true },
   isChanging: { type: Boolean, default: false },
+  /** Icon-only, for sitting inline in the composer row. */
   compact: { type: Boolean, default: false },
 })
 
@@ -16,18 +17,25 @@ const active = computed(
     PERSONALITIES.find((item) => item.value === props.personality) ??
     PERSONALITIES[0],
 )
+
+// Not shown visually — the button is icon-only, so this is what assistive
+// technology announces. POST /v1/context changes server-side state for
+// every chat, so it names the mode currently in effect rather than the
+// action.
+const label = computed(() => `Personalidade: ${active.value.label}`)
 </script>
 
 <template>
-  <v-menu location="bottom end">
+  <v-menu location="top start">
     <template #activator="{ props: menuProps }">
       <v-btn
         v-bind="menuProps"
         :loading="isChanging"
         :icon="compact"
-        variant="outlined"
+        :variant="compact ? 'text' : 'outlined'"
+        :aria-label="label"
         color="primary"
-        :aria-label="compact ? 'Escolher personalidade' : undefined"
+        class="personality__activator"
       >
         <v-icon v-if="compact" :icon="active.icon" />
         <template v-else>
@@ -38,7 +46,7 @@ const active = computed(
       </v-btn>
     </template>
 
-    <v-list width="280" density="comfortable">
+    <v-list width="320" density="comfortable" class="personality">
       <v-list-subheader>Personalidade do oráculo</v-list-subheader>
       <v-list-item
         v-for="item in PERSONALITIES"
@@ -50,10 +58,32 @@ const active = computed(
           <v-icon :icon="item.icon" size="20" />
         </template>
         <v-list-item-title>{{ item.label }}</v-list-item-title>
-        <v-list-item-subtitle class="text-wrap">
+        <v-list-item-subtitle>
           {{ item.hint }}
         </v-list-item-subtitle>
       </v-list-item>
     </v-list>
   </v-menu>
 </template>
+
+<style scoped>
+/*
+ * Vuetify clamps subtitles to a single line with -webkit-line-clamp and
+ * display: -webkit-box, which cut these descriptions off mid-word.
+ */
+.personality :deep(.v-list-item-subtitle) {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+
+.personality :deep(.v-list-item) {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+</style>

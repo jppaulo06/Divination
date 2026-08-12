@@ -2,14 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { useAppTheme } from '@/composables/useAppTheme'
 import { useChats } from '@/composables/useChats'
 import { usePersonality } from '@/composables/usePersonality'
 
 import ChatComposer from './ChatComposer.vue'
 import ChatSidebar from './ChatSidebar.vue'
 import ChatTranscript from './ChatTranscript.vue'
-import PersonalityMenu from './PersonalityMenu.vue'
 
 const {
   chats,
@@ -26,15 +24,35 @@ const {
   retryLast,
 } = useChats()
 
-const { isDark, toggleTheme } = useAppTheme()
-const { personality, isChanging, notice, noticeType, setPersonality } =
-  usePersonality()
+const {
+  personality,
+  isChanging,
+  error: personalityError,
+  setPersonality,
+} = usePersonality()
 
-const { mdAndDown, smAndDown } = useDisplay()
+const { mdAndDown } = useDisplay()
 
-// Off-canvas below md, pinned open above it.
-const drawer = ref(!mdAndDown.value)
-watch(mdAndDown, (isCompact) => (drawer.value = !isCompact))
+// Overlay below md, in-layout above it — but hideable either way, so the
+// transcript can have the full width. Only the wide layout keeps a
+// lasting preference; on a narrow screen the drawer is transient.
+const SIDEBAR_KEY = 'divination:sidebar'
+const storedSidebar = localStorage.getItem(SIDEBAR_KEY)
+const sidebarPreferred = ref(storedSidebar !== 'closed')
+
+const drawer = ref(mdAndDown.value ? false : sidebarPreferred.value)
+
+watch(mdAndDown, (isCompact) => {
+  drawer.value = isCompact ? false : sidebarPreferred.value
+})
+
+function toggleDrawer() {
+  drawer.value = !drawer.value
+  if (!mdAndDown.value) {
+    sidebarPreferred.value = drawer.value
+    localStorage.setItem(SIDEBAR_KEY, drawer.value ? 'open' : 'closed')
+  }
+}
 
 const composer = ref(null)
 
@@ -64,55 +82,34 @@ const showError = computed({
   },
 })
 
-const showNotice = computed({
-  get: () => Boolean(notice.value),
+const showPersonalityError = computed({
+  get: () => Boolean(personalityError.value),
   set: (value) => {
-    if (!value) notice.value = ''
+    if (!value) personalityError.value = ''
   },
 })
 </script>
 
 <template>
   <v-app-bar :height="64" flat class="topbar">
+    <!-- aria-label carries the meaning instead of a visible tooltip. -->
     <v-app-bar-nav-icon
-      v-if="mdAndDown"
-      aria-label="Alternar lista de conversas"
-      @click="drawer = !drawer"
+      :aria-label="drawer ? 'Ocultar conversas' : 'Mostrar conversas'"
+      :aria-expanded="drawer"
+      @click="toggleDrawer"
     />
 
     <div class="topbar__brand">
       <v-icon icon="mdi-eye-outline" color="primary" size="22" />
       <span class="topbar__name">Divination</span>
-      <span v-if="!smAndDown" class="topbar__tag">Regras de D&amp;D</span>
     </div>
-
-    <v-spacer />
-
-    <PersonalityMenu
-      :personality="personality"
-      :is-changing="isChanging"
-      :compact="smAndDown"
-      class="mr-2"
-      @change="setPersonality"
-    />
-
-    <v-tooltip :text="isDark ? 'Tema claro' : 'Tema escuro'">
-      <template #activator="{ props: tooltipProps }">
-        <v-btn
-          v-bind="tooltipProps"
-          :icon="isDark ? 'mdi-white-balance-sunny' : 'mdi-weather-night'"
-          variant="text"
-          :aria-label="isDark ? 'Ativar tema claro' : 'Ativar tema escuro'"
-          @click="toggleTheme"
-        />
-      </template>
-    </v-tooltip>
   </v-app-bar>
 
+  <!-- Deliberately not `permanent`: that prop pins the drawer open and
+       ignores v-model, which would make it impossible to hide. -->
   <v-navigation-drawer
     v-model="drawer"
     :temporary="mdAndDown"
-    :permanent="!mdAndDown"
     width="288"
     class="drawer"
   >
@@ -137,7 +134,10 @@ const showNotice = computed({
       <ChatComposer
         ref="composer"
         :is-sending="isSending"
+        :personality="personality"
+        :is-changing-personality="isChanging"
         @send="sendMessage"
+        @change-personality="setPersonality"
       />
     </div>
   </v-main>
@@ -147,12 +147,12 @@ const showNotice = computed({
   </v-snackbar>
 
   <v-snackbar
-    v-model="showNotice"
-    :color="noticeType"
+    v-model="showPersonalityError"
+    color="error"
     location="top"
-    :timeout="3500"
+    :timeout="6000"
   >
-    {{ notice }}
+    {{ personalityError }}
   </v-snackbar>
 </template>
 
@@ -175,13 +175,6 @@ const showNotice = computed({
   font-size: 1.15rem;
   font-weight: 600;
   letter-spacing: 0.06em;
-}
-
-.topbar__tag {
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.45;
 }
 
 .drawer {
