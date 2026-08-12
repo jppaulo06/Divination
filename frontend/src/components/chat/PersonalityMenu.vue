@@ -23,6 +23,12 @@ const active = computed(
 // every chat, so it names the mode currently in effect rather than the
 // action.
 const label = computed(() => `Personalidade: ${active.value.label}`)
+
+// The activator keeps a constant "adjust" icon instead of mirroring the
+// active mode: as a settings control it should signal that something is
+// configurable, and a shield read as security instead. The per-mode icons
+// stay in the menu, where each one sits beside its own label.
+const ACTIVATOR_ICON = 'mdi-tune-variant'
 </script>
 
 <template>
@@ -37,9 +43,9 @@ const label = computed(() => `Personalidade: ${active.value.label}`)
         color="primary"
         class="personality__activator"
       >
-        <v-icon v-if="compact" :icon="active.icon" />
+        <v-icon v-if="compact" :icon="ACTIVATOR_ICON" />
         <template v-else>
-          <v-icon :icon="active.icon" start size="18" />
+          <v-icon :icon="ACTIVATOR_ICON" start size="18" />
           {{ active.label }}
           <v-icon icon="mdi-chevron-down" end size="18" />
         </template>
