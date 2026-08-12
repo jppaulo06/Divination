@@ -76,7 +76,7 @@ Consequences:
 | --- | --- |
 | `weak_retrieval` | best chunk scored below threshold, or nothing retrieved |
 | `unsupported_claim` | answer states dice/DC absent from every chunk |
-| `refusal_or_hedge` | answer declines to answer (EN or PT) |
+| `refusal_or_hedge` | answer says the provided material was insufficient (EN or PT) |
 | `format_guardrail_violation` | answer does not end with the required closing |
 | `repeated_question` | user re-asked something earlier in the thread |
 | `user_negative_feedback` | thumbs-down (written transactionally, not detected) |
@@ -92,9 +92,38 @@ imprecisions:
   the model to admit gaps. The value is in the aggregate: a cluster of
   refusals on one subject is a corpus coverage gap.
 
-`WeakRetrievalDetector`'s threshold (0.7) is a **placeholder**. Calibrate
-it against the observed spread of `retrieved_chunks.score` before treating
-the signal as meaningful.
+`refusal_or_hedge` matches a structural shape — a reference to the
+provided material within one sentence of a negation — rather than a list
+of phrasings. Version 1 used a phrase list and missed a real refusal in
+production ("o contexto fornecido **não traz**…", where the list expected
+"não cobre" / "não há informações"). That answer is now a fixture in
+`tests/monitoring/test_refusal_hedge.py`.
+
+It only catches refusals the model states outright. A confident
+hallucination produces no refusal signal at all, so an absence of these
+is not evidence of health.
+
+### What the first production traffic showed
+
+`WeakRetrievalDetector`'s threshold (0.7) is still **uncalibrated, and the
+first real data suggests an absolute threshold may be the wrong shape
+entirely.** Across 16 stored chunks the scores spanned only 0.579–0.654,
+so every interaction fell below the threshold and the signal fired on 100%
+of traffic — a constant, not a signal. Worse, the query `"Bla"` scored the
+highest top score of all (0.654), above a substantive rules question
+(0.632). Per-query spread (0.009–0.019) did not separate them either.
+
+Caveat: that sample contained no known-good question, so it shows the
+score does not discriminate *among bad queries* — not yet that it cannot
+discriminate at all. Run `scripts/generate_traffic.py`, which includes
+in-scope spell questions, and compare before choosing a threshold or
+replacing the approach.
+
+The same data surfaced a corpus defect worth more than any threshold
+tuning: the top-ranked chunk for a rules question was scraped website
+boilerplate ("We have updated our terms and conditions. Click the link to
+learn more.", page 84). Navigation and legal text in the source PDF
+competes with rules content at retrieval time.
 
 ## Running it
 
@@ -165,11 +194,13 @@ tests use in-memory SQLite. Runs in CI on every PR with no API keys.
 
 ## Not done yet
 
-- **No thumbs up/down in the UI.** The endpoint and the transactional
-  signal exist and are tested, and the traffic generator exercises them,
-  but nothing in the Vue app calls `POST /v1/feedback`. Until that lands,
-  real users cannot produce the pattern's canonical signal.
-- **`weak_retrieval` threshold uncalibrated** (see above).
+- **Answers restored from history cannot be rated.** `GET /v1/chats`
+  returns LangChain messages with no interaction ids, so the frontend can
+  only attach a rating to answers received in the current session —
+  reload the page and the buttons disappear from older turns. Fixing it
+  means returning interaction ids alongside the chat history.
+- **`weak_retrieval` threshold uncalibrated**, and possibly the wrong
+  shape (see above).
 - **`repeated_question` uses token overlap**, not embeddings, so it misses
   fully reworded repeats. Upgrading is a batch job over stored
   interactions; nothing else changes, because detectors read the database

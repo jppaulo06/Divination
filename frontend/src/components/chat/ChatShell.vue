@@ -21,6 +21,7 @@ const {
   startDraft,
   selectChat,
   sendMessage,
+  rateMessage,
   retryLast,
 } = useChats()
 
@@ -130,6 +131,7 @@ const showPersonalityError = computed({
         :is-sending="isSending"
         @pick="onPick"
         @retry="retryLast"
+        @rate="rateMessage"
       />
       <ChatComposer
         ref="composer"

@@ -10,7 +10,7 @@ const props = defineProps({
   isSending: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['pick', 'retry'])
+const emit = defineEmits(['pick', 'retry', 'rate'])
 
 const scroller = ref(null)
 // Only follow the conversation when the reader is already at the bottom;
@@ -62,6 +62,7 @@ watch(
           :message="message"
           :can-retry="index === messages.length - 1 && !isSending"
           @retry="emit('retry')"
+          @rate="emit('rate', message, $event)"
         />
         <TypingIndicator v-if="isSending" />
       </template>

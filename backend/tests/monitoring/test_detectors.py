@@ -3,11 +3,9 @@
 Deterministic and offline: no LLM, no API keys, no vector store.
 """
 
-import pytest
 
 from project.adapters.monitoring.detectors import (
     FormatGuardrailDetector,
-    RefusalHedgeDetector,
     RepeatedQuestionDetector,
     UnsupportedClaimDetector,
     WeakRetrievalDetector,
@@ -130,27 +128,6 @@ class TestUnsupportedClaim:
         )
 
         assert UnsupportedClaimDetector().detect(view) == []
-
-
-class TestRefusalHedge:
-    def test_plain_answer_is_not_flagged(self):
-        assert RefusalHedgeDetector().detect(make_view()) == []
-
-    @pytest.mark.parametrize(
-        "answer",
-        [
-            "The rules provided don't cover opportunity attacks.",
-            "The context does not mention Action Surge.",
-            "I don't have enough information to answer that.",
-            "As regras fornecidas não cobrem esse caso.",
-            "Não há informações sobre isso no contexto.",
-        ],
-    )
-    def test_refusals_are_flagged(self, answer):
-        signals = RefusalHedgeDetector().detect(make_view(answer=answer))
-
-        assert len(signals) == 1
-        assert signals[0].type == "refusal_or_hedge"
 
 
 class TestFormatGuardrail:

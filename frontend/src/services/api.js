@@ -53,6 +53,22 @@ export async function askQuestion({ question, chatId }) {
   }
 }
 
+/**
+ * Rates one answer. `rating` is -1 (thumb down) or +1 (thumb up).
+ *
+ * Unlike the other calls this one must not be fire-and-forget: a rating
+ * that fails to store cannot be reconstructed later, so the rejection is
+ * left to the caller to surface.
+ */
+export async function sendFeedback({ interactionId, rating, comment = null }) {
+  const { data } = await client.post('/v1/feedback', {
+    interactionId,
+    rating,
+    comment,
+  })
+  return data.feedbackId
+}
+
 export async function changeTemplate(template) {
   const { data } = await client.post('/v1/context', { newTemplate: template })
   return data
