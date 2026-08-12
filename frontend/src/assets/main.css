@@ -1,25 +1,114 @@
 @import './base.css';
 
-#app {
-  margin: 0 auto;
+/*
+ * Styling for sanitised markdown coming back from the model. These rules
+ * are global on purpose: the HTML is injected with v-html, so scoped
+ * selectors would never match it.
+ */
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 0.85em;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 1.25em 0 0.5em;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: rgb(var(--v-theme-primary));
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.35em;
+}
+
+.markdown li {
+  margin-bottom: 0.3em;
+}
+
+.markdown li::marker {
+  color: rgba(var(--v-theme-primary), 0.75);
+}
+
+.markdown a {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown strong {
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.98);
+}
+
+.markdown blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 2px solid rgba(var(--v-theme-primary), 0.5);
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.markdown code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 0.85em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: rgba(var(--v-theme-primary), 0.12);
+}
+
+.markdown pre {
+  margin: 0 0 0.85em;
+  padding: 12px 14px;
+  border-radius: 10px;
+  overflow-x: auto;
+  background: rgba(var(--v-theme-background), 0.55);
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.markdown pre code {
   padding: 0;
-  font-weight: normal;
+  background: none;
+  font-size: 0.82em;
 }
 
-a,
-.green {
-  text-decoration: none;
-  color: hsla(160, 100%, 37%, 1);
-  transition: 0.4s;
-  padding: 3px;
+.markdown hr {
+  margin: 1.1em 0;
+  border: 0;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
-@media (hover: hover) {
-  a:hover {
-    background-color: hsla(160, 100%, 37%, 0.2);
-  }
+/* Stat tables are common in rules answers and are often wider than the
+   bubble, so the table scrolls rather than stretching it. */
+.markdown table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 0.85em;
+  font-size: 0.88em;
 }
 
-@media (min-width: 1024px) {
+.markdown th,
+.markdown td {
+  padding: 7px 11px;
+  text-align: left;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
 
+.markdown th {
+  background: rgba(var(--v-theme-primary), 0.1);
+  font-weight: 600;
 }
