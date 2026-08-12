@@ -21,8 +21,6 @@ services:
     volumes:
       - ./frontend/:/app
       - /app/node_modules
-    profiles:
-      - project
 
   api:
     build:
@@ -33,5 +31,3 @@ services:
       - ./backend/:/usr/src
     env_file:
       - "./backend/.env"
-    profiles:
-      - project
