@@ -16,7 +16,43 @@ The monograph for this capstone project is available on: https://luizcarlosdk.gi
 
 ## How to Run
 
+Copy `backend/.env.sample` to `backend/.env` and fill in the API keys first.
+
+There are two profiles. Every service belongs to one, so plain
+`docker compose up` starts nothing — pick one.
+
+### Development (hot reload)
+
+Source is bind-mounted; vite and uvicorn both reload on save.
+
 ```
- docker-compose --profile project build
- docker-compose --profile project up
+ docker compose --profile dev up --build
+```
+
+- frontend: http://localhost:3000
+- API: http://localhost:8000 (docs at `/docs`)
+
+### Production (static build)
+
+The frontend is compiled and served as static files by nginx; no source
+is mounted.
+
+```
+ docker compose --profile prod up --build
+```
+
+- frontend: http://localhost:8080
+- API: http://localhost:8000
+
+`VITE_BACKEND_URL` is inlined into the bundle at build time, so deploying
+anywhere other than localhost means updating both the `front` build arg
+and the API's `ALLOWED_ORIGINS` in `docker-compose.yml`.
+
+### Troubleshooting
+
+Frontend dependencies are held in a named volume, so it must be dropped
+when `package.json` changes:
+
+```
+ docker volume rm divination_front_node_modules
 ```
