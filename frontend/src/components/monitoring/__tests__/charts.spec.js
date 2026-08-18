@@ -132,3 +132,43 @@ describe('ScoreHistogram', () => {
     expect(wrapper.text()).toContain('Nenhum score')
   })
 })
+
+describe('ScoreHistogram regressions found by looking at it', () => {
+  const bins = [
+    { lo: 0.58, hi: 0.6, count: 2 },
+    { lo: 0.6, hi: 0.62, count: 0 },
+    { lo: 0.62, hi: 0.64, count: 3 },
+  ]
+
+  it('draws no mark for an empty bin', () => {
+    // min-height rendered zero-count bins as 2px stubs on the baseline,
+    // which read as real observations.
+    const wrapper = mount(ScoreHistogram, {
+      props: { bins, threshold: 0.7, belowThreshold: 5, count: 5 },
+    })
+
+    expect(wrapper.findAll('.hist__bar')).toHaveLength(2)
+  })
+
+  it('flips the threshold label inward when the line is near the edge', () => {
+    // Against a threshold no score reaches, the marker lands at the far
+    // right and its label overflowed the panel.
+    const wrapper = mount(ScoreHistogram, {
+      props: { bins, threshold: 0.7, belowThreshold: 5, count: 5 },
+    })
+
+    expect(
+      wrapper.find('.hist__threshold-label').classes(),
+    ).toContain('hist__threshold-label--flipped')
+  })
+
+  it('keeps the label outward when the line sits left of centre', () => {
+    const wrapper = mount(ScoreHistogram, {
+      props: { bins, threshold: 0.585, belowThreshold: 1, count: 5 },
+    })
+
+    expect(
+      wrapper.find('.hist__threshold-label').classes(),
+    ).not.toContain('hist__threshold-label--flipped')
+  })
+})

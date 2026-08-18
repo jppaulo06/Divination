@@ -10,6 +10,10 @@ const props = defineProps({
 
 const hasBins = computed(() => props.bins.length > 0)
 
+// A zero-count bin has nothing to draw; min-height would otherwise render
+// it as a stub that reads as a real observation.
+const filledBins = computed(() => props.bins.filter((bin) => bin.count > 0))
+
 /**
  * The domain always includes the threshold, even when no score reaches
  * it. That is the point of the chart: if every bar sits to the left of
@@ -52,11 +56,21 @@ function position(bin) {
   }
 }
 
-const thresholdLeft = computed(() => {
+const thresholdOffset = computed(() => {
   if (props.threshold === null) return null
   const { min, span } = domain.value
-  return `${((props.threshold - min) / span) * 100}%`
+  return ((props.threshold - min) / span) * 100
 })
+
+const thresholdLeft = computed(() =>
+  thresholdOffset.value === null ? null : `${thresholdOffset.value}%`,
+)
+
+// Past two thirds of the width the label would overflow the panel, so it
+// flips to the inner side of the line.
+const labelFlipped = computed(
+  () => thresholdOffset.value !== null && thresholdOffset.value > 66,
+)
 
 const allBelow = computed(
   () => props.count > 0 && props.belowThreshold === props.count,
@@ -73,7 +87,7 @@ const format = (value) => value.toFixed(3)
   <div v-else class="hist">
     <div class="hist__plot">
       <div
-        v-for="(bin, index) in bins"
+        v-for="(bin, index) in filledBins"
         :key="index"
         class="hist__bar"
         :style="position(bin)"
@@ -85,7 +99,12 @@ const format = (value) => value.toFixed(3)
         class="hist__threshold"
         :style="{ left: thresholdLeft }"
       >
-        <span class="hist__threshold-label">limiar {{ threshold }}</span>
+        <span
+          class="hist__threshold-label"
+          :class="{ 'hist__threshold-label--flipped': labelFlipped }"
+        >
+          limiar {{ threshold }}
+        </span>
       </div>
     </div>
 
@@ -141,6 +160,12 @@ const format = (value) => value.toFixed(3)
   white-space: nowrap;
   font-size: 0.7rem;
   opacity: 0.7;
+}
+
+.hist__threshold-label--flipped {
+  left: auto;
+  right: 6px;
+  text-align: right;
 }
 
 .hist__axis {
