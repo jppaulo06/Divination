@@ -4,10 +4,14 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 
+from project.adapters.monitoring.detectors.weak_retrieval import (
+    DEFAULT_SCORE_THRESHOLD,
+)
 from project.adapters.monitoring.models import (
     CurationReview,
     Feedback,
     Interaction,
+    RetrievedChunk,
     Signal,
 )
 
@@ -88,28 +92,89 @@ class CandidateQuery:
             ]
 
     def summary(self) -> dict:
-        """Interaction, candidate and per-type signal counts."""
+        """Aggregate counts and distributions for the monitoring view."""
         with self.database.session() as session:
             total = session.scalar(
                 select(func.count()).select_from(Interaction)
             )
-            reviewed = select(CurationReview.interaction_id).scalar_subquery()
+            reviewed_ids = select(
+                CurationReview.interaction_id
+            ).scalar_subquery()
             pending = session.scalar(
                 select(func.count(func.distinct(Signal.interaction_id))).where(
-                    Signal.interaction_id.not_in(reviewed)
+                    Signal.interaction_id.not_in(reviewed_ids)
                 )
+            )
+            flagged = session.scalar(
+                select(func.count(func.distinct(Signal.interaction_id)))
+            )
+            reviewed = session.scalar(
+                select(func.count(func.distinct(CurationReview.interaction_id)))
             )
             by_type = session.execute(
                 select(Signal.type, func.count(Signal.id)).group_by(
                     Signal.type
                 )
             ).all()
+            by_source = session.execute(
+                select(Interaction.source, func.count(Interaction.id)).group_by(
+                    Interaction.source
+                )
+            ).all()
+            positive = session.scalar(
+                select(func.count())
+                .select_from(Feedback)
+                .where(Feedback.rating > 0)
+            )
+            negative = session.scalar(
+                select(func.count())
+                .select_from(Feedback)
+                .where(Feedback.rating <= 0)
+            )
+            # One row per interaction: the best score its retrieval found.
+            top_scores = [
+                score
+                for (score,) in session.execute(
+                    select(func.max(RetrievedChunk.score)).group_by(
+                        RetrievedChunk.interaction_id
+                    )
+                ).all()
+                if score is not None
+            ]
+            latencies = [
+                value
+                for value in session.scalars(
+                    select(Interaction.latency_ms).where(
+                        Interaction.latency_ms > 0
+                    )
+                )
+            ]
 
-            return {
-                "interactions": total or 0,
-                "pending_candidates": pending or 0,
-                "signals_by_type": {row[0]: row[1] for row in by_type},
-            }
+        return {
+            "interactions": total or 0,
+            "flagged_interactions": flagged or 0,
+            "pending_candidates": pending or 0,
+            "reviewed_interactions": reviewed or 0,
+            "signals_by_type": {row[0]: row[1] for row in by_type},
+            "interactions_by_source": {row[0]: row[1] for row in by_source},
+            "feedback": {
+                "positive": positive or 0,
+                "negative": negative or 0,
+            },
+            "retrieval_scores": {
+                "count": len(top_scores),
+                "threshold": DEFAULT_SCORE_THRESHOLD,
+                "below_threshold": sum(
+                    1 for s in top_scores if s < DEFAULT_SCORE_THRESHOLD
+                ),
+                "bins": _histogram(top_scores),
+            },
+            "latency_ms": {
+                "p50": _percentile(latencies, 0.5),
+                "p95": _percentile(latencies, 0.95),
+                "max": max(latencies) if latencies else 0,
+            },
+        }
 
     def _to_candidate(self, session, interaction: Interaction) -> Candidate:
         signals = list(
@@ -157,3 +222,37 @@ class CandidateQuery:
             retrieval_context=[c.content for c in interaction.chunks],
             top_score=max(scores) if scores else None,
         )
+
+
+def _percentile(values: list[int], fraction: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(round(fraction * (len(ordered) - 1))))
+    return ordered[index]
+
+
+def _histogram(values: list[float], bin_count: int = 12) -> list[dict]:
+    """Buckets over the observed range rather than a fixed 0-1 span.
+
+    Retrieval scores have clustered inside a narrow band in practice, and
+    fixed bins over the full range would collapse the whole distribution
+    into one bar.
+    """
+    if not values:
+        return []
+
+    low, high = min(values), max(values)
+    if high == low:
+        return [{"lo": low, "hi": high, "count": len(values)}]
+
+    width = (high - low) / bin_count
+    bins = [
+        {"lo": low + index * width, "hi": low + (index + 1) * width,
+         "count": 0}
+        for index in range(bin_count)
+    ]
+    for value in values:
+        index = min(bin_count - 1, int((value - low) / width))
+        bins[index]["count"] += 1
+    return bins

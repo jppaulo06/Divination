@@ -69,6 +69,18 @@ export async function sendFeedback({ interactionId, rating, comment = null }) {
   return data.feedbackId
 }
 
+export async function fetchMonitoringSummary() {
+  const { data } = await client.get('/v1/monitoring/summary')
+  return data
+}
+
+export async function fetchCandidates({ limit = 25, signalType = null } = {}) {
+  const params = { limit }
+  if (signalType) params.signal_type = signalType
+  const { data } = await client.get('/v1/monitoring/candidates', { params })
+  return data
+}
+
 export async function changeTemplate(template) {
   const { data } = await client.post('/v1/context', { newTemplate: template })
   return data

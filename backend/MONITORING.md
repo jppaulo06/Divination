@@ -177,6 +177,27 @@ Repeated identical answers are handed out in turn order, and an answer
 with no match keeps `interactionId: null`, which the client reads as "not
 rateable".
 
+## Dashboard
+
+`/monitoring` in the frontend, linked from the chat topbar. No auth — it
+is a demo surface, not an operator console.
+
+It reads the same two endpoints as everything else (`/summary` and
+`/candidates`), so it shows live data rather than an export. Four stat
+tiles, signals by type, the retrieval-score distribution, traffic by
+source, and the curation queue with each candidate's answer, retrieved
+chunks and signal details.
+
+One deliberate choice in the score chart: the x-domain always includes the
+threshold even when no score reaches it. If every bar sits left of the
+marker, the detector is firing on all traffic and the chart says so
+outright — which is exactly the state the first production data was in.
+
+Marks use a single hue (the app's secondary violet, `#9b6dff`), validated
+for lightness band, chroma and 3:1 contrast against the card surface. One
+series means bar length already carries the magnitude, so colouring each
+row would spend the identity channel re-encoding it.
+
 ## Curation's input contract
 
 ```sql

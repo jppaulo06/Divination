@@ -104,6 +104,15 @@ const showPersonalityError = computed({
       <v-icon icon="mdi-eye-outline" color="primary" size="22" />
       <span class="topbar__name">Divination</span>
     </div>
+
+    <v-spacer />
+
+    <v-btn
+      icon="mdi-radar"
+      variant="text"
+      aria-label="Abrir o painel de monitoramento"
+      :to="{ name: 'monitoring' }"
+    />
   </v-app-bar>
 
   <!-- Deliberately not `permanent`: that prop pins the drawer open and

@@ -358,3 +358,98 @@ class TestCandidateQuery:
             "format_guardrail_violation": 1,
             NEGATIVE_FEEDBACK_SIGNAL: 1,
         }
+
+
+class TestSummaryAggregates:
+    def test_empty_database_reports_zeroes_not_errors(self, database):
+        summary = CandidateQuery(database).summary()
+
+        assert summary["interactions"] == 0
+        assert summary["retrieval_scores"]["bins"] == []
+        assert summary["latency_ms"] == {"p50": 0, "p95": 0, "max": 0}
+
+    def test_flagged_and_reviewed_are_counted_separately(
+        self, sink, database
+    ):
+        flagged = sink.record_interaction(make_record(answer="No closing."))
+        sink.record_interaction(make_record(chat_id="clean"))
+        DetectorRunner(database, [FormatGuardrailDetector()]).backfill()
+
+        with database.session() as session:
+            session.add(
+                CurationReview(
+                    interaction_id=flagged,
+                    verdict=VERDICT_DEFECT,
+                    reviewer="human",
+                )
+            )
+            session.commit()
+
+        summary = CandidateQuery(database).summary()
+
+        assert summary["interactions"] == 2
+        assert summary["flagged_interactions"] == 1
+        assert summary["reviewed_interactions"] == 1
+        # Reviewed drops out of the queue but stays counted as flagged.
+        assert summary["pending_candidates"] == 0
+
+    def test_feedback_is_split_by_polarity(self, sink, database):
+        first = sink.record_interaction(make_record(chat_id="a"))
+        second = sink.record_interaction(make_record(chat_id="b"))
+        sink.record_feedback(first, rating=-1)
+        sink.record_feedback(second, rating=1)
+
+        assert CandidateQuery(database).summary()["feedback"] == {
+            "positive": 1,
+            "negative": 1,
+        }
+
+    def test_histogram_uses_one_row_per_interaction(self, sink, database):
+        for index in range(3):
+            sink.record_interaction(make_record(chat_id=f"c{index}"))
+
+        scores = CandidateQuery(database).summary()["retrieval_scores"]
+
+        # Three interactions with one chunk each, not three chunks.
+        assert scores["count"] == 3
+        assert sum(b["count"] for b in scores["bins"]) == 3
+
+    def test_identical_scores_collapse_to_a_single_bin(self, sink, database):
+        sink.record_interaction(make_record())
+
+        bins = CandidateQuery(database).summary()["retrieval_scores"]["bins"]
+
+        assert len(bins) == 1
+        assert bins[0]["count"] == 1
+
+    def test_scores_below_threshold_are_counted(self, sink, database):
+        sink.record_interaction(
+            make_record(
+                chat_id="weak",
+                chunks=[RetrievedChunkRecord(rank=0, content="x", score=0.2)],
+            )
+        )
+
+        scores = CandidateQuery(database).summary()["retrieval_scores"]
+
+        assert scores["below_threshold"] == 1
+        assert scores["threshold"] > 0
+
+    def test_latency_percentiles(self, sink, database):
+        for index, latency in enumerate([100, 200, 900]):
+            sink.record_interaction(
+                make_record(chat_id=f"c{index}", latency_ms=latency)
+            )
+
+        latency = CandidateQuery(database).summary()["latency_ms"]
+
+        assert latency["p50"] == 200
+        assert latency["max"] == 900
+
+    def test_source_breakdown(self, sink, database):
+        sink.record_interaction(make_record(chat_id="a", source="production"))
+        sink.record_interaction(make_record(chat_id="b", source="synthetic"))
+
+        assert CandidateQuery(database).summary()[
+            "interactions_by_source"
+        ] == {"production": 1, "synthetic": 1}
