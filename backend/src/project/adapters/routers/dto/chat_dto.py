@@ -13,8 +13,8 @@ class ShowChatResponse(RouteExchange):
     chat_history: list
 
     @classmethod
-    def create(self, history: dict):
-        return ShowChatResponse(chat_history=history)
+    def create(self, messages: list):
+        return ShowChatResponse(chat_history=messages)
 
 
 class ListChatsResponse(RouteExchange):

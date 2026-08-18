@@ -18,6 +18,9 @@ from project.adapters.enrichers.AnswerEnricher import AnswerEnricher
 from project.adapters.monitoring.CandidateQuery import CandidateQuery
 from project.adapters.monitoring.Database import MonitoringDatabase
 from project.adapters.monitoring.DetectorRunner import DetectorRunner
+from project.adapters.monitoring.SqlInteractionLookup import (
+    SqlInteractionLookup,
+)
 from project.adapters.monitoring.SqlInteractionSink import SqlInteractionSink
 
 from project.core.ChatService import ChatService
@@ -47,10 +50,11 @@ def _setup_monitoring():
             SqlInteractionSink(database),
             DetectorRunner(database),
             CandidateQuery(database),
+            SqlInteractionLookup(database),
         )
     except Exception:
         logger.exception("monitoring unavailable; continuing without it")
-        return None, None, None
+        return None, None, None, None
 
 
 def _inject_routers(api: FastAPI, *routers):
@@ -60,7 +64,12 @@ def _inject_routers(api: FastAPI, *routers):
 
 @asynccontextmanager
 async def _setup(api: FastAPI, settings: Settings):
-    interaction_sink, detector_runner, candidate_query = _setup_monitoring()
+    (
+        interaction_sink,
+        detector_runner,
+        candidate_query,
+        interaction_lookup,
+    ) = _setup_monitoring()
 
     context_enricher = VectorDatabaseEnricher()
     llm_answerer = MaritacaLLM()
@@ -78,7 +87,7 @@ async def _setup(api: FastAPI, settings: Settings):
 
     routers = [
         AnswerRouter(service, chat_repository, detector_runner),
-        ChatRouter(chat_repository),
+        ChatRouter(chat_repository, interaction_lookup),
     ]
     if interaction_sink is not None:
         routers.append(FeedbackRouter(interaction_sink))

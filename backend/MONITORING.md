@@ -164,6 +164,19 @@ Label a demo instance's traffic as synthetic rather than production:
 MONITORING_SOURCE=synthetic docker compose up -d
 ```
 
+## Rating an answer from an earlier session
+
+`GET /v1/chats` tags each stored answer with the interaction that produced
+it, so a conversation restored on page load stays rateable.
+
+Answers are matched to interactions **by their text, not by position**. A
+failed interaction is recorded (with `error` set) but never written to the
+chat history, so after the first error the two sequences have different
+lengths and index-based pairing would attach a rating to the wrong answer.
+Repeated identical answers are handed out in turn order, and an answer
+with no match keeps `interactionId: null`, which the client reads as "not
+rateable".
+
 ## Curation's input contract
 
 ```sql
@@ -194,11 +207,18 @@ tests use in-memory SQLite. Runs in CI on every PR with no API keys.
 
 ## Not done yet
 
-- **Answers restored from history cannot be rated.** `GET /v1/chats`
-  returns LangChain messages with no interaction ids, so the frontend can
-  only attach a rating to answers received in the current session —
-  reload the page and the buttons disappear from older turns. Fixing it
-  means returning interaction ids alongside the chat history.
+- **Chat history is still in-memory and dies with the process.**
+  `ChatRepository` is a dict, while monitoring persists in Postgres, so
+  after a restart `GET /v1/chats` returns nothing while the interactions
+  are all still recorded. The two stores disagree about what happened.
+  Serving history from `interactions` would fix it, but that changes what
+  feeds `RunnableWithMessageHistory` — the conversational memory the model
+  sees — so it belongs in its own change rather than riding along with a
+  monitoring fix.
+- **A rating given before a reload is not shown after it.** The restored
+  answer is rateable again, but its existing rating is not returned, so
+  the thumb renders unselected and rating it again appends a second
+  feedback row. Harmless (the signal is raised once) but misleading.
 - **`weak_retrieval` threshold uncalibrated**, and possibly the wrong
   shape (see above).
 - **`repeated_question` uses token overlap**, not embeddings, so it misses
