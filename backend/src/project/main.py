@@ -42,19 +42,26 @@ MONITORING_SOURCE = os.environ.get("MONITORING_SOURCE", "production")
 
 
 def _setup_monitoring():
-    """Build the monitoring layer, or return Nones if it can't start."""
-    try:
-        database = MonitoringDatabase()
-        database.create_schema()
-        return (
-            SqlInteractionSink(database),
-            DetectorRunner(database),
-            CandidateQuery(database),
-            SqlInteractionLookup(database),
+    """Build the monitoring layer.
+
+    The database is not required to be reachable yet. Schema creation is
+    deferred (see MonitoringDatabase.ensure_schema), so the routes are
+    always registered and start working on their own once the database
+    appears — instead of a database that was briefly missing at boot
+    leaving monitoring off for the whole process lifetime.
+    """
+    database = MonitoringDatabase()
+    if not database.ensure_schema():
+        logger.warning(
+            "monitoring is degraded until %s is reachable", database.url
         )
-    except Exception:
-        logger.exception("monitoring unavailable; continuing without it")
-        return None, None, None, None
+
+    return (
+        SqlInteractionSink(database),
+        DetectorRunner(database),
+        CandidateQuery(database),
+        SqlInteractionLookup(database),
+    )
 
 
 def _inject_routers(api: FastAPI, *routers):
@@ -85,16 +92,13 @@ async def _setup(api: FastAPI, settings: Settings):
         source=MONITORING_SOURCE,
     )
 
-    routers = [
+    _inject_routers(
+        api,
         AnswerRouter(service, chat_repository, detector_runner),
         ChatRouter(chat_repository, interaction_lookup),
-    ]
-    if interaction_sink is not None:
-        routers.append(FeedbackRouter(interaction_sink))
-    if candidate_query is not None:
-        routers.append(MonitoringRouter(candidate_query))
-
-    _inject_routers(api, *routers)
+        FeedbackRouter(interaction_sink),
+        MonitoringRouter(candidate_query),
+    )
     yield
 
 

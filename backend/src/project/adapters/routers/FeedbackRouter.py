@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 
 from project.adapters.routers.dto.feedback_dto import (
     FeedbackRequest,
@@ -33,6 +34,11 @@ class FeedbackRouter(Router):
                 )
             except RuntimeError as failure:
                 raise HTTPException(status_code=503, detail=str(failure))
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="monitoring database is unavailable",
+                )
 
             return FeedbackResponse.create(feedback_id)
 

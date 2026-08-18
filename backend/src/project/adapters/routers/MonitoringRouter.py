@@ -1,8 +1,18 @@
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy.exc import SQLAlchemyError
 
 from project.ports.routers.Router import Router
+
+_UNAVAILABLE = "monitoring database is unavailable"
+
+
+def _guard(read):
+    try:
+        return read()
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail=_UNAVAILABLE)
 
 
 class MonitoringRouter(Router):
@@ -24,12 +34,14 @@ class MonitoringRouter(Router):
             signal_type: Optional[str] = None,
             source: Optional[str] = None,
         ):
-            return self.candidate_query.pending(
-                limit=limit, signal_type=signal_type, source=source
+            return _guard(
+                lambda: self.candidate_query.pending(
+                    limit=limit, signal_type=signal_type, source=source
+                )
             )
 
         @router.get("/summary")
         def signal_summary():
-            return self.candidate_query.summary()
+            return _guard(self.candidate_query.summary)
 
         return router
