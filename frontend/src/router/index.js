@@ -10,22 +10,35 @@ const router = createRouter({
       component: HomeView,
     },
     {
-      path: '/monitoring',
-      name: 'monitoring',
-      // Loaded on demand: the dashboard is an operator surface, and most
-      // visits to the app never open it.
-      component: () => import('../views/MonitoringView.vue'),
+      // Everything operator-facing shares one shell, so navigation lives
+      // in the sidebar instead of each page linking to the next.
+      path: '/admin',
+      component: () => import('../components/admin/AdminLayout.vue'),
+      children: [
+        { path: '', redirect: { name: 'admin-monitoring' } },
+        {
+          path: 'monitoring',
+          name: 'admin-monitoring',
+          component: () => import('../views/MonitoringView.vue'),
+        },
+        { path: 'curation', redirect: { name: 'curation-sampling' } },
+        {
+          path: 'curation/sampling',
+          name: 'curation-sampling',
+          component: () => import('../views/CurationView.vue'),
+        },
+        {
+          path: 'curation/defects',
+          name: 'curation-defects',
+          component: () => import('../views/DefectsView.vue'),
+        },
+      ],
     },
-    {
-      path: '/curation',
-      name: 'curation',
-      component: () => import('../views/CurationView.vue'),
-    },
-    {
-      path: '/defects',
-      name: 'defects',
-      component: () => import('../views/DefectsView.vue'),
-    },
+    // The admin pages lived at the top level first; keep those links
+    // working rather than breaking bookmarks.
+    { path: '/monitoring', redirect: { name: 'admin-monitoring' } },
+    { path: '/curation', redirect: { name: 'curation-sampling' } },
+    { path: '/defects', redirect: { name: 'curation-defects' } },
   ],
 })
 
