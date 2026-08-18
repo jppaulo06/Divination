@@ -21,6 +21,11 @@ const router = createRouter({
       name: 'curation',
       component: () => import('../views/CurationView.vue'),
     },
+    {
+      path: '/defects',
+      name: 'defects',
+      component: () => import('../views/DefectsView.vue'),
+    },
   ],
 })
 

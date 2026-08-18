@@ -76,9 +76,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
     <v-btn
       variant="text"
+      prepend-icon="mdi-bug-outline"
+      class="ml-2"
+      :to="{ name: 'defects' }"
+    >
+      Defeitos
+    </v-btn>
+
+    <v-btn
+      variant="text"
       prepend-icon="mdi-shuffle-variant"
       :loading="isLoading"
-      class="ml-2"
       @click="load()"
     >
       Nova amostra

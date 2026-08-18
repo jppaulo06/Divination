@@ -234,6 +234,28 @@ half alone says nothing about recall.
 
 Errored interactions are never sampled: they have no answer to judge.
 
+## Confirmed defects
+
+`/defects` lists interactions a reviewer judged `defect`, grouped by
+**signal signature** — which detectors fired on each. One defect is an
+anecdote; several sharing a signature are one cause with one fix, which is
+what makes the grouping worth more than the list.
+
+Two numbers carry most of the value:
+
+- **Pontos cegos** — defects with no signal at all. Those are the
+  detectors' blind spots, so tuning existing detectors would never have
+  found them; they argue for a new detector. This stays at zero until
+  unflagged traffic is reviewed, which is what the curation sample's
+  unflagged half exists for.
+- **Já viraram teste** — defects promoted into the regression dataset.
+  Anything above zero here is the CD4AI loop actually closing.
+
+Each defect shows its answer beside the chunks that were retrieved, which
+is what separates the two fixes: if the correct information is in the
+retrieved text, the problem is generation (prompt); if it is absent, the
+problem is retrieval or corpus coverage.
+
 ## Curation's input contract
 
 ```sql
