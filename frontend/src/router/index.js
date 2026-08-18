@@ -8,7 +8,14 @@ const router = createRouter({
       path: '/',
       name: 'home',
       component: HomeView,
-    }
+    },
+    {
+      path: '/monitoring',
+      name: 'monitoring',
+      // Loaded on demand: the dashboard is an operator surface, and most
+      // visits to the app never open it.
+      component: () => import('../views/MonitoringView.vue'),
+    },
   ],
 })
 
