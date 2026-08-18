@@ -126,7 +126,9 @@ const format = (value) => value.toFixed(3)
 <style scoped>
 .hist__plot {
   position: relative;
-  height: 150px;
+  /* Tall enough that a full-column-width chart keeps a readable aspect
+     ratio instead of flattening into a wide sliver. */
+  height: var(--hist-height, 240px);
   border-bottom: 1px solid rgba(var(--v-border-color), 0.35);
 }
 

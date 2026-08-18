@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   asPercent,
+  SAMPLE_SIZE,
   useCuration,
   VERDICT_DEFECT,
   VERDICT_NOISE,
@@ -13,7 +14,6 @@ vi.mock('@/services/api', async (importOriginal) => {
   return {
     ...actual,
     fetchCurationSample: vi.fn(),
-    fetchCurationStats: vi.fn(),
     submitReview: vi.fn(),
   }
 })
@@ -31,24 +31,18 @@ const item = (id, stratum = 'flagged') => ({
   latency_ms: 100,
 })
 
-const stats = (overrides = {}) => ({
-  flagged: { pool: 4, reviewed: 1, defects: 1 },
-  unflagged: { pool: 8, reviewed: 1, defects: 0 },
-  precision: 1,
-  estimated_recall: 1,
-  ...overrides,
-})
-
 async function loaded(items = [item('a'), item('b', 'unflagged')]) {
   api.fetchCurationSample.mockResolvedValue(items)
-  api.fetchCurationStats.mockResolvedValue(stats())
   const curation = useCuration()
-  await curation.load()
+  await curation.draw()
   return curation
 }
 
 describe('useCuration', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
 
   it('loads a sample and starts on the first item', async () => {
     const curation = await loaded()
@@ -106,15 +100,6 @@ describe('useCuration', () => {
     expect(curation.signalsRevealed.value).toBe(false)
   })
 
-  it('refreshes the metrics after each verdict', async () => {
-    api.submitReview.mockResolvedValue(1)
-    const curation = await loaded()
-    api.fetchCurationStats.mockResolvedValue(stats({ precision: 0.5 }))
-
-    await curation.judge(VERDICT_DEFECT)
-
-    expect(curation.stats.value.precision).toBe(0.5)
-  })
 
   it('stays on the item when saving fails', async () => {
     api.submitReview.mockRejectedValue(new Error('down'))
@@ -149,10 +134,106 @@ describe('useCuration', () => {
     api.fetchCurationSample.mockRejectedValue(new Error('boom'))
     const curation = useCuration()
 
-    await curation.load()
+    await curation.draw()
 
     expect(curation.sample.value).toEqual([])
     expect(curation.error.value).toBeTruthy()
+  })
+})
+
+describe('sample persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it('asks for six items by default', async () => {
+    api.fetchCurationSample.mockResolvedValue([item('a')])
+    await useCuration().draw()
+
+    expect(api.fetchCurationSample).toHaveBeenCalledWith({
+      size: SAMPLE_SIZE,
+      flaggedShare: 0.5,
+    })
+    expect(SAMPLE_SIZE).toBe(6)
+  })
+
+  it('draws on a first visit, when nothing is stored', async () => {
+    api.fetchCurationSample.mockResolvedValue([item('a')])
+    await useCuration().restore()
+
+    expect(api.fetchCurationSample).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses the stored sample on a later visit instead of drawing again', async () => {
+    const items = [item('a'), item('b', 'unflagged')]
+    api.fetchCurationSample.mockResolvedValue(items)
+    await useCuration().draw()
+    api.fetchCurationSample.mockClear()
+
+    // A fresh composable stands in for reopening the page.
+    const revisit = useCuration()
+    await revisit.restore()
+
+    expect(api.fetchCurationSample).not.toHaveBeenCalled()
+    expect(revisit.sample.value.map((i) => i.interaction_id)).toEqual([
+      'a',
+      'b',
+    ])
+  })
+
+  it('resumes where the reviewer left off, not at the start', async () => {
+    api.fetchCurationSample.mockResolvedValue([item('a'), item('b')])
+    api.submitReview.mockResolvedValue(1)
+    const first = useCuration()
+    await first.draw()
+    await first.judge(VERDICT_DEFECT)
+
+    const revisit = useCuration()
+    await revisit.restore()
+
+    expect(revisit.index.value).toBe(1)
+    expect(revisit.reviewedCount.value).toBe(1)
+    expect(revisit.current.value.interaction_id).toBe('b')
+  })
+
+  it('remembers a skip too, so a skipped item is not re-offered', async () => {
+    api.fetchCurationSample.mockResolvedValue([item('a'), item('b')])
+    const first = useCuration()
+    await first.draw()
+    first.skip()
+
+    const revisit = useCuration()
+    await revisit.restore()
+
+    expect(revisit.index.value).toBe(1)
+    expect(revisit.reviewedCount.value).toBe(0)
+  })
+
+  it('replaces the stored sample when a new one is asked for', async () => {
+    api.fetchCurationSample.mockResolvedValue([item('a')])
+    const curation = useCuration()
+    await curation.draw()
+    await curation.judge(VERDICT_NOISE)
+
+    api.fetchCurationSample.mockResolvedValue([item('z')])
+    await curation.draw()
+
+    expect(curation.sample.value[0].interaction_id).toBe('z')
+    expect(curation.index.value).toBe(0)
+    expect(curation.reviewedCount.value).toBe(0)
+
+    const revisit = useCuration()
+    await revisit.restore()
+    expect(revisit.sample.value[0].interaction_id).toBe('z')
+  })
+
+  it('draws a fresh sample when the stored entry is corrupt', async () => {
+    localStorage.setItem('divination:curation-sample', 'not json')
+    api.fetchCurationSample.mockResolvedValue([item('a')])
+    await useCuration().restore()
+
+    expect(api.fetchCurationSample).toHaveBeenCalledTimes(1)
   })
 })
 

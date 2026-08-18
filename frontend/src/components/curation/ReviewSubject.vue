@@ -10,10 +10,21 @@ const props = defineProps({
 
 const emit = defineEmits(['reveal'])
 
+// Strictly earlier turns only. Filtering on !is_subject also returned the
+// turns that came *after* this one, which both mislabels them as history
+// and leaks the answer: a reviewer who sees the user re-ask downstream has
+// been told repeated_question fired before giving a verdict.
 const priorTurns = computed(() =>
-  props.item.thread.filter((turn) => !turn.is_subject),
+  props.item.thread.filter(
+    (turn) => turn.turn_index < props.item.turn_index,
+  ),
 )
 const hasThread = computed(() => priorTurns.value.length > 0)
+const historyLabel = computed(() =>
+  priorTurns.value.length === 1
+    ? '1 turno anterior'
+    : `${priorTurns.value.length} turnos anteriores`,
+)
 const score = computed(() =>
   props.item.top_score === null ? '—' : props.item.top_score.toFixed(3),
 )
@@ -21,6 +32,26 @@ const score = computed(() =>
 
 <template>
   <div class="subject">
+    <!--
+      Shown inline rather than behind an accordion: an answer like "sim, e
+      nesse caso o dano dobra" cannot be judged without the turns leading
+      to it, and repeated_question is thread-scoped, so a reviewer cannot
+      rule on that signal at all without seeing the history.
+    -->
+    <section v-if="hasThread" class="subject__history">
+      <h3 class="subject__history-title">Conversa até aqui · {{ historyLabel }}</h3>
+      <div
+        v-for="turn in priorTurns"
+        :key="turn.turn_index"
+        class="subject__turn"
+      >
+        <p class="subject__turn-q">{{ turn.question }}</p>
+        <p class="subject__turn-a">{{ turn.answer }}</p>
+      </div>
+    </section>
+
+    <p v-if="hasThread" class="subject__label">Turno em avaliação</p>
+
     <div class="subject__question">{{ item.question }}</div>
 
     <div class="subject__answer">{{ item.answer || '—' }}</div>
@@ -50,21 +81,6 @@ const score = computed(() =>
         </v-expansion-panel-text>
       </v-expansion-panel>
 
-      <v-expansion-panel v-if="hasThread" elevation="0">
-        <v-expansion-panel-title>
-          Conversa ({{ priorTurns.length }} turnos anteriores)
-        </v-expansion-panel-title>
-        <v-expansion-panel-text>
-          <div
-            v-for="turn in priorTurns"
-            :key="turn.turn_index"
-            class="subject__turn"
-          >
-            <p class="subject__turn-q">{{ turn.question }}</p>
-            <p class="subject__turn-a">{{ turn.answer }}</p>
-          </div>
-        </v-expansion-panel-text>
-      </v-expansion-panel>
     </v-expansion-panels>
 
     <!--
@@ -172,6 +188,31 @@ const score = computed(() =>
 
 .subject__chunks li {
   overflow-wrap: anywhere;
+}
+
+.subject__history {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(var(--v-theme-surface-light), 0.45);
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  /* A long thread must not push the turn under review off screen. */
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.subject__history-title,
+.subject__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  opacity: 0.55;
+  margin: 0 0 10px;
+}
+
+.subject__label {
+  margin-bottom: 6px;
 }
 
 .subject__turn {
