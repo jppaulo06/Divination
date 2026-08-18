@@ -58,6 +58,20 @@ class CurationRouter(Router):
 
             return ReviewResponse.create(review_id)
 
+        @router.get("/defects")
+        def list_defects(limit: int = Query(100, ge=1, le=500)):
+            def read():
+                defects = self.curation_store.defects(limit=limit)
+                return {
+                    "summary": self.curation_store.defect_summary(defects),
+                    "defects": defects,
+                }
+
+            try:
+                return read()
+            except SQLAlchemyError:
+                raise HTTPException(status_code=503, detail=_UNAVAILABLE)
+
         @router.get("/stats")
         def review_stats():
             try:

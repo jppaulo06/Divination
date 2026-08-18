@@ -1,5 +1,6 @@
 """Sampling and review storage for curation (CD4AI stage 3)."""
 
+import random
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
@@ -13,6 +14,7 @@ from project.adapters.monitoring.models import (
 )
 
 DEFAULT_SAMPLE_SIZE = 20
+NO_SIGNAL_SIGNATURE = "(nenhum sinal)"
 DEFAULT_FLAGGED_SHARE = 0.5
 
 
@@ -22,6 +24,34 @@ class Turn:
     question: str
     answer: str
     is_subject: bool
+
+
+@dataclass
+class Defect:
+    """A confirmed defect, with what is needed to act on it."""
+
+    interaction_id: str
+    chat_id: str
+    turn_index: int
+    question: str
+    answer: str
+    rationale: str | None
+    reviewer: str
+    reviewed_at: str
+    template_name: str
+    corpus_version: str
+    model: str
+    top_score: float | None
+    #: Which detectors fired, joined; NO_SIGNAL_SIGNATURE when none did.
+    signature: str = NO_SIGNAL_SIGNATURE
+    signals: list[dict] = field(default_factory=list)
+    feedback: list[dict] = field(default_factory=list)
+    retrieval_context: list[str] = field(default_factory=list)
+    promoted_golden: str | None = None
+
+    @property
+    def missed_by_detectors(self) -> bool:
+        return not self.signals
 
 
 @dataclass
@@ -97,6 +127,13 @@ class CurationStore:
 
             sampled = [(item, "flagged") for item in flagged]
             sampled += [(item, "unflagged") for item in plain]
+            # Interleaved, not concatenated: a reviewer works through the
+            # sample in order, so keeping the strata in blocks means every
+            # flagged item is judged before the first unflagged one and
+            # recall stays unmeasurable. It also stops position itself
+            # from revealing which stratum an item came from.
+            random.shuffle(sampled)
+
             return [
                 self._to_sampled(session, interaction, stratum)
                 for interaction, stratum in sampled
@@ -167,6 +204,105 @@ class CurationStore:
             "precision": precision,
             "estimated_recall": recall,
         }
+
+    def defects(self, limit: int = 100) -> list[Defect]:
+        """Confirmed defects, newest review first."""
+        with self.database.session() as session:
+            rows = session.execute(
+                select(CurationReview, Interaction)
+                .join(Interaction, Interaction.id == CurationReview.interaction_id)
+                .where(CurationReview.verdict == VERDICT_DEFECT)
+                .order_by(CurationReview.created_at.desc())
+                .limit(limit)
+            ).all()
+
+            return [
+                self._to_defect(session, review, interaction)
+                for review, interaction in rows
+            ]
+
+    def defect_summary(self, defects: list[Defect]) -> dict:
+        """Aggregates that point at a cause rather than at a row.
+
+        One defect is an anecdote; several sharing a signature are a work
+        item. Defects with no signal are the ones worth most attention —
+        they are the detectors' blind spots, so no amount of tuning the
+        existing ones would have surfaced them.
+        """
+        by_signature: dict[str, int] = {}
+        by_template: dict[str, int] = {}
+        by_corpus: dict[str, int] = {}
+
+        for defect in defects:
+            by_signature[defect.signature] = (
+                by_signature.get(defect.signature, 0) + 1
+            )
+            by_template[defect.template_name or "?"] = (
+                by_template.get(defect.template_name or "?", 0) + 1
+            )
+            by_corpus[defect.corpus_version or "?"] = (
+                by_corpus.get(defect.corpus_version or "?", 0) + 1
+            )
+
+        return {
+            "total": len(defects),
+            "missed_by_detectors": sum(
+                1 for defect in defects if defect.missed_by_detectors
+            ),
+            "promoted": sum(1 for defect in defects if defect.promoted_golden),
+            "by_signature": by_signature,
+            "by_template": by_template,
+            "by_corpus": by_corpus,
+        }
+
+    def _to_defect(self, session, review, interaction) -> Defect:
+        signals = list(
+            session.scalars(
+                select(Signal).where(Signal.interaction_id == interaction.id)
+            )
+        )
+        feedback = list(
+            session.scalars(
+                select(Feedback)
+                .where(Feedback.interaction_id == interaction.id)
+                .order_by(Feedback.created_at)
+            )
+        )
+        scores = [c.score for c in interaction.chunks if c.score is not None]
+        signature = (
+            " + ".join(sorted({s.type for s in signals}))
+            if signals
+            else NO_SIGNAL_SIGNATURE
+        )
+
+        return Defect(
+            interaction_id=interaction.id,
+            chat_id=interaction.chat_id,
+            turn_index=interaction.turn_index,
+            question=interaction.question,
+            answer=interaction.answer,
+            rationale=review.rationale,
+            reviewer=review.reviewer,
+            reviewed_at=review.created_at.isoformat(),
+            template_name=interaction.template_name,
+            corpus_version=interaction.corpus_version,
+            model=interaction.model,
+            top_score=max(scores) if scores else None,
+            signature=signature,
+            signals=[
+                {
+                    "type": s.type,
+                    "score": s.score,
+                    "details": s.details or {},
+                }
+                for s in signals
+            ],
+            feedback=[
+                {"rating": f.rating, "comment": f.comment} for f in feedback
+            ],
+            retrieval_context=[c.content for c in interaction.chunks],
+            promoted_golden=review.promoted_golden,
+        )
 
     def _signal_ids(self):
         return select(Signal.interaction_id).distinct().scalar_subquery()

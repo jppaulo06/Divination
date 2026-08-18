@@ -104,6 +104,13 @@ export async function submitReview({
   return data.reviewId
 }
 
+export async function fetchDefects({ limit = 100 } = {}) {
+  const { data } = await client.get('/v1/curation/defects', {
+    params: { limit },
+  })
+  return data
+}
+
 export async function fetchCurationStats() {
   const { data } = await client.get('/v1/curation/stats')
   return data

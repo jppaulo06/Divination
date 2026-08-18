@@ -267,3 +267,115 @@ class TestCurationApi:
 
     def test_stats_endpoint(self, store):
         assert self.client(store).get("/v1/curation/stats").status_code == 200
+
+
+class TestSampleOrdering:
+    def test_the_sample_is_shuffled_across_strata(self, sink, database, store):
+        # Concatenated strata meant a reviewer working top-to-bottom judged
+        # every flagged item before the first unflagged one, so recall
+        # stayed unmeasurable no matter how much they reviewed.
+        seed(sink, database, flagged=10, unflagged=10)
+
+        orders = set()
+        for _ in range(12):
+            sample = store.sample(size=20, flagged_share=0.5)
+            orders.add(tuple(item.stratum for item in sample))
+
+        assert len(orders) > 1, "sample order never varied"
+
+    def test_both_strata_appear_in_the_first_half(self, sink, database, store):
+        seed(sink, database, flagged=10, unflagged=10)
+
+        # Across a few draws, an unflagged item must sometimes land early;
+        # with block ordering it never could.
+        early_strata = set()
+        for _ in range(12):
+            sample = store.sample(size=20, flagged_share=0.5)
+            early_strata.update(item.stratum for item in sample[:5])
+
+        assert early_strata == {"flagged", "unflagged"}
+
+
+class TestDefects:
+    def test_only_defects_are_listed(self, sink, database, store):
+        flagged, plain = seed(sink, database, flagged=2, unflagged=2)
+        store.record_review(flagged[0], VERDICT_DEFECT, "dano errado")
+        store.record_review(flagged[1], VERDICT_NOISE)
+
+        defects = store.defects()
+
+        assert [d.interaction_id for d in defects] == [flagged[0]]
+        assert defects[0].rationale == "dano errado"
+
+    def test_a_defect_carries_what_is_needed_to_act(
+        self, sink, database, store
+    ):
+        flagged, _ = seed(sink, database, flagged=1)
+        store.record_review(flagged[0], VERDICT_DEFECT)
+
+        defect = store.defects()[0]
+
+        assert defect.question
+        assert defect.retrieval_context == ["deals 8d6 fire"]
+        assert defect.top_score == 0.9
+        assert defect.corpus_version is not None
+
+    def test_signature_names_the_detectors_that_fired(
+        self, sink, database, store
+    ):
+        flagged, _ = seed(sink, database, flagged=1)
+        store.record_review(flagged[0], VERDICT_DEFECT)
+
+        assert store.defects()[0].signature == "format_guardrail_violation"
+
+    def test_a_defect_with_no_signal_is_a_detector_blind_spot(
+        self, sink, database, store
+    ):
+        _, plain = seed(sink, database, unflagged=1)
+        store.record_review(plain[0], VERDICT_DEFECT)
+
+        defect = store.defects()[0]
+
+        assert defect.missed_by_detectors is True
+        assert defect.signature == "(nenhum sinal)"
+
+    def test_summary_groups_by_signature(self, sink, database, store):
+        flagged, plain = seed(sink, database, flagged=2, unflagged=1)
+        for interaction_id in (*flagged, plain[0]):
+            store.record_review(interaction_id, VERDICT_DEFECT)
+
+        summary = store.defect_summary(store.defects())
+
+        assert summary["total"] == 3
+        assert summary["missed_by_detectors"] == 1
+        assert summary["by_signature"]["format_guardrail_violation"] == 2
+        assert summary["by_signature"]["(nenhum sinal)"] == 1
+
+    def test_summary_counts_promotions(self, sink, database, store):
+        flagged, _ = seed(sink, database, flagged=1)
+        store.record_review(flagged[0], VERDICT_DEFECT)
+
+        summary = store.defect_summary(store.defects())
+
+        assert summary["promoted"] == 0
+
+    def test_summary_of_nothing(self, store):
+        assert store.defect_summary([]) == {
+            "total": 0,
+            "missed_by_detectors": 0,
+            "promoted": 0,
+            "by_signature": {},
+            "by_template": {},
+            "by_corpus": {},
+        }
+
+    def test_defects_endpoint(self, sink, database, store):
+        flagged, _ = seed(sink, database, flagged=1)
+        store.record_review(flagged[0], VERDICT_DEFECT)
+
+        payload = TestCurationApi().client(store).get(
+            "/v1/curation/defects"
+        ).json()
+
+        assert payload["summary"]["total"] == 1
+        assert len(payload["defects"]) == 1
