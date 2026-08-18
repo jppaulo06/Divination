@@ -16,6 +16,11 @@ const router = createRouter({
       // visits to the app never open it.
       component: () => import('../views/MonitoringView.vue'),
     },
+    {
+      path: '/curation',
+      name: 'curation',
+      component: () => import('../views/CurationView.vue'),
+    },
   ],
 })
 

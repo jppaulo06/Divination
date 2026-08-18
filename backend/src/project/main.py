@@ -5,6 +5,7 @@ load_dotenv()
 from project.adapters.routers.AnswerRouter import AnswerRouter
 from project.adapters.routers.ChatRouter import ChatRouter
 from project.adapters.routers.FeedbackRouter import FeedbackRouter
+from project.adapters.routers.CurationRouter import CurationRouter
 from project.adapters.routers.MonitoringRouter import MonitoringRouter
 
 from project.adapters.Settings import Settings
@@ -16,6 +17,7 @@ from project.adapters.enrichers.VectorDatabaseEnricher import (
 from project.adapters.enrichers.AnswerEnricher import AnswerEnricher
 
 from project.adapters.monitoring.CandidateQuery import CandidateQuery
+from project.adapters.monitoring.CurationStore import CurationStore
 from project.adapters.monitoring.Database import MonitoringDatabase
 from project.adapters.monitoring.DetectorRunner import DetectorRunner
 from project.adapters.monitoring.SqlInteractionLookup import (
@@ -61,6 +63,7 @@ def _setup_monitoring():
         DetectorRunner(database),
         CandidateQuery(database),
         SqlInteractionLookup(database),
+        CurationStore(database),
     )
 
 
@@ -76,6 +79,7 @@ async def _setup(api: FastAPI, settings: Settings):
         detector_runner,
         candidate_query,
         interaction_lookup,
+        curation_store,
     ) = _setup_monitoring()
 
     context_enricher = VectorDatabaseEnricher()
@@ -98,6 +102,7 @@ async def _setup(api: FastAPI, settings: Settings):
         ChatRouter(chat_repository, interaction_lookup),
         FeedbackRouter(interaction_sink),
         MonitoringRouter(candidate_query),
+        CurationRouter(curation_store),
     )
     yield
 

@@ -198,6 +198,42 @@ for lightness band, chroma and 3:1 contrast against the card surface. One
 series means bar length already carries the magnitude, so colouring each
 row would spend the identity channel re-encoding it.
 
+## Curation panel
+
+`/curation` in the frontend. Draws an unreviewed **stratified sample** and
+walks it one interaction at a time, writing verdicts to
+`curation_reviews`. Keyboard-driven (`d` defect, `n` noise, `s` skip, `r`
+reveal), because a review pass is repetitive and reaching for the mouse on
+every item is what stops people at five instead of a hundred.
+
+Both strata are sampled on purpose, and they answer different questions:
+
+- **Flagged** interactions measure **precision** — of the things the
+  detectors flagged, how many are real defects.
+- **Unflagged** interactions measure **recall**, and nothing else can. A
+  confident hallucination raises no signal at all, so the candidate queue
+  structurally cannot contain it. Reviewing only flagged traffic would
+  make the detectors look perfect by construction.
+
+Signals are **hidden until the reviewer judges**. Seeing what the
+detectors found first would anchor the verdict, and an anchored verdict
+cannot measure the detectors that produced it.
+
+Recall is an *estimate*, not a count. The sample is stratified, so the raw
+defect ratio is biased by how much of each pool was drawn; each stratum's
+defect rate is scaled back to its pool size first:
+
+```
+true positives ≈ flagged_pool   × (flagged_defects   / flagged_reviewed)
+missed         ≈ unflagged_pool × (unflagged_defects / unflagged_reviewed)
+recall         ≈ true positives / (true positives + missed)
+```
+
+It stays `null` until both strata have at least one review, since either
+half alone says nothing about recall.
+
+Errored interactions are never sampled: they have no answer to judge.
+
 ## Curation's input contract
 
 ```sql
