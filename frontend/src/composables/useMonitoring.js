@@ -1,10 +1,6 @@
 import { computed, ref } from 'vue'
 
-import {
-  fetchCandidates,
-  fetchMonitoringSummary,
-  toErrorMessage,
-} from '@/services/api'
+import { fetchMonitoringSummary, toErrorMessage } from '@/services/api'
 
 /** Human labels for the signal types the detectors emit. */
 const SIGNAL_LABELS = {
@@ -22,10 +18,8 @@ export function signalLabel(type) {
 
 export function useMonitoring() {
   const summary = ref(null)
-  const candidates = ref([])
   const isLoading = ref(false)
   const error = ref('')
-  const signalFilter = ref(null)
 
   const hasData = computed(() => (summary.value?.interactions ?? 0) > 0)
 
@@ -55,12 +49,7 @@ export function useMonitoring() {
     isLoading.value = true
     error.value = ''
     try {
-      const [nextSummary, nextCandidates] = await Promise.all([
-        fetchMonitoringSummary(),
-        fetchCandidates({ signalType: signalFilter.value }),
-      ])
-      summary.value = nextSummary
-      candidates.value = nextCandidates
+      summary.value = await fetchMonitoringSummary()
     } catch (failure) {
       error.value = toErrorMessage(failure)
     } finally {
@@ -68,24 +57,14 @@ export function useMonitoring() {
     }
   }
 
-  async function filterBy(type) {
-    // Clicking the active filter clears it, so the chart doubles as a
-    // toggle rather than needing a separate reset control.
-    signalFilter.value = signalFilter.value === type ? null : type
-    await load()
-  }
-
   return {
     summary,
-    candidates,
     isLoading,
     error,
-    signalFilter,
     hasData,
     signalRows,
     sourceRows,
     flaggedShare,
     load,
-    filterBy,
   }
 }

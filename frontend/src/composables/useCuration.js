@@ -2,7 +2,6 @@ import { computed, ref } from 'vue'
 
 import {
   fetchCurationSample,
-  fetchCurationStats,
   submitReview,
   toErrorMessage,
 } from '@/services/api'
@@ -10,9 +9,38 @@ import {
 export const VERDICT_DEFECT = 'defect'
 export const VERDICT_NOISE = 'noise'
 
+/**
+ * Reviewing is sampling, not clearing a queue: a handful of judged
+ * interactions estimates detector quality, and a session short enough to
+ * finish in one sitting keeps that judgement careful.
+ */
+export const SAMPLE_SIZE = 6
+
+const STORAGE_KEY = 'divination:curation-sample'
+
+/**
+ * The drawn sample is kept in the browser so returning to the page
+ * continues the same one instead of drawing a fresh set. There are no
+ * accounts, so the browser is the only thing that identifies a reviewer;
+ * a new set is drawn only when one is explicitly asked for.
+ */
+function readStored() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')
+    if (!Array.isArray(parsed?.items) || !parsed.items.length) return null
+    return {
+      items: parsed.items,
+      index: Number(parsed.index) || 0,
+      reviewed: Number(parsed.reviewed) || 0,
+    }
+  } catch {
+    // Corrupt or unreadable entry: fall back to drawing a new sample.
+    return null
+  }
+}
+
 export function useCuration() {
   const sample = ref([])
-  const stats = ref(null)
   const index = ref(0)
   const isLoading = ref(false)
   const isSaving = ref(false)
@@ -31,25 +59,52 @@ export function useCuration() {
     () => sample.value.length > 0 && index.value >= sample.value.length,
   )
 
-  async function load({ size = 20, flaggedShare = 0.5 } = {}) {
+  function persist() {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          items: sample.value,
+          index: index.value,
+          reviewed: reviewedCount.value,
+        }),
+      )
+    } catch {
+      // Quota or private mode: the sample simply will not survive a
+      // reload, which is a worse experience but not a broken one.
+    }
+  }
+
+  /** Draws a new sample, replacing whatever was stored. */
+  async function draw({ size = SAMPLE_SIZE, flaggedShare = 0.5 } = {}) {
     isLoading.value = true
     error.value = ''
     try {
-      const [nextSample, nextStats] = await Promise.all([
-        fetchCurationSample({ size, flaggedShare }),
-        fetchCurationStats(),
-      ])
-      sample.value = nextSample
-      stats.value = nextStats
+      sample.value = await fetchCurationSample({ size, flaggedShare })
       index.value = 0
       reviewedCount.value = 0
       resetTurn()
+      persist()
     } catch (failure) {
       error.value = toErrorMessage(failure)
       sample.value = []
     } finally {
       isLoading.value = false
     }
+  }
+
+  /**
+   * Continues the stored sample, drawing one only on a first visit.
+   * Progress is restored too, so reviewed items are not offered again.
+   */
+  async function restore(options) {
+    const stored = readStored()
+    if (!stored) return draw(options)
+
+    sample.value = stored.items
+    index.value = Math.min(stored.index, stored.items.length)
+    reviewedCount.value = stored.reviewed
+    resetTurn()
   }
 
   function resetTurn() {
@@ -65,6 +120,7 @@ export function useCuration() {
     if (!current.value) return
     index.value += 1
     resetTurn()
+    persist()
   }
 
   async function judge(verdict) {
@@ -82,8 +138,7 @@ export function useCuration() {
       reviewedCount.value += 1
       index.value += 1
       resetTurn()
-      // Refreshed per verdict so precision and recall move as you work.
-      stats.value = await fetchCurationStats()
+      persist()
     } catch (failure) {
       error.value = toErrorMessage(failure)
     } finally {
@@ -93,7 +148,6 @@ export function useCuration() {
 
   return {
     sample,
-    stats,
     index,
     current,
     remaining,
@@ -104,7 +158,8 @@ export function useCuration() {
     rationale,
     signalsRevealed,
     reviewedCount,
-    load,
+    draw,
+    restore,
     judge,
     skip,
     revealSignals,
