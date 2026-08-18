@@ -200,6 +200,61 @@ describe('useChats', () => {
     })
   })
 
+  describe('restored conversations', () => {
+    it('carries the interactionId so old answers stay rateable', async () => {
+      api.listChats.mockResolvedValue({
+        a: {
+          messages: [
+            { type: 'human', content: 'pergunta' },
+            { type: 'ai', content: 'resposta', interactionId: 'int-9' },
+          ],
+        },
+      })
+
+      const chat = useChats()
+      await chat.loadChats()
+
+      expect(chat.messages.value[1].interactionId).toBe('int-9')
+    })
+
+    it('leaves answers the backend could not identify unrateable', async () => {
+      api.listChats.mockResolvedValue({
+        a: {
+          messages: [
+            { type: 'human', content: 'pergunta' },
+            { type: 'ai', content: 'resposta', interactionId: null },
+          ],
+        },
+      })
+
+      const chat = useChats()
+      await chat.loadChats()
+
+      expect(chat.messages.value[1].interactionId).toBeNull()
+    })
+
+    it('rates an answer restored from history', async () => {
+      api.listChats.mockResolvedValue({
+        a: {
+          messages: [
+            { type: 'human', content: 'pergunta' },
+            { type: 'ai', content: 'resposta', interactionId: 'int-9' },
+          ],
+        },
+      })
+      api.sendFeedback.mockResolvedValue(3)
+
+      const chat = useChats()
+      await chat.loadChats()
+      await chat.rateMessage(chat.messages.value[1], -1)
+
+      expect(api.sendFeedback).toHaveBeenCalledWith({
+        interactionId: 'int-9',
+        rating: -1,
+      })
+    })
+  })
+
   describe('rateMessage', () => {
     async function chatWithAnswer(interactionId = 'int-1') {
       api.listChats.mockResolvedValue({})

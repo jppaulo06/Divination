@@ -19,6 +19,10 @@ const localId = () => `m${(nextLocalId += 1)}`
  * ("human"/"ai"), which is authoritative. Index parity is only a fallback
  * for older payloads: parity desynchronises permanently the moment a
  * single turn is missing, which silently mislabels every later message.
+ *
+ * `interactionId` is present on answers the monitoring layer recorded, so
+ * a restored conversation can still be rated. It is absent when
+ * monitoring is off, or when the answer predates it.
  */
 function toUiMessage(raw, index) {
   const type = raw?.type
@@ -27,7 +31,12 @@ function toUiMessage(raw, index) {
   else if (type === 'ai') role = 'assistant'
   else role = index % 2 === 0 ? 'user' : 'assistant'
 
-  return { id: localId(), role, content: raw?.content ?? '' }
+  return {
+    id: localId(),
+    role,
+    content: raw?.content ?? '',
+    interactionId: raw?.interactionId ?? null,
+  }
 }
 
 export function useChats() {
