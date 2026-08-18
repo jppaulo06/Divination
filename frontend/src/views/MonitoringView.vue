@@ -41,6 +41,14 @@ onMounted(load)
 
     <v-btn
       variant="text"
+      prepend-icon="mdi-scale-balance"
+      :to="{ name: 'curation' }"
+    >
+      Curadoria
+    </v-btn>
+
+    <v-btn
+      variant="text"
       prepend-icon="mdi-refresh"
       :loading="isLoading"
       @click="load"

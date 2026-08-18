@@ -81,6 +81,34 @@ export async function fetchCandidates({ limit = 25, signalType = null } = {}) {
   return data
 }
 
+export async function fetchCurationSample({
+  size = 20,
+  flaggedShare = 0.5,
+} = {}) {
+  const { data } = await client.get('/v1/curation/sample', {
+    params: { size, flagged_share: flaggedShare },
+  })
+  return data
+}
+
+export async function submitReview({
+  interactionId,
+  verdict,
+  rationale = null,
+}) {
+  const { data } = await client.post('/v1/curation/reviews', {
+    interactionId,
+    verdict,
+    rationale,
+  })
+  return data.reviewId
+}
+
+export async function fetchCurationStats() {
+  const { data } = await client.get('/v1/curation/stats')
+  return data
+}
+
 export async function changeTemplate(template) {
   const { data } = await client.post('/v1/context', { newTemplate: template })
   return data
