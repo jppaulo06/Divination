@@ -1,9 +1,9 @@
 <script setup>
 import { onBeforeUnmount, onMounted } from 'vue'
 
+import PageHeader from '@/components/admin/PageHeader.vue'
 import ReviewSubject from '@/components/curation/ReviewSubject.vue'
 import {
-  asPercent,
   useCuration,
   VERDICT_DEFECT,
   VERDICT_NOISE,
@@ -11,7 +11,6 @@ import {
 
 const {
   sample,
-  stats,
   index,
   current,
   isDone,
@@ -21,7 +20,8 @@ const {
   rationale,
   signalsRevealed,
   reviewedCount,
-  load,
+  draw,
+  restore,
   judge,
   skip,
   revealSignals,
@@ -48,7 +48,9 @@ function onKey(event) {
 }
 
 onMounted(() => {
-  load()
+  // Continues the stored sample rather than drawing a new one, so
+  // revisiting the page does not silently hand out different work.
+  restore()
   window.addEventListener('keydown', onKey)
 })
 
@@ -56,162 +58,123 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <v-app-bar :height="64" flat class="topbar">
-    <v-btn
-      icon="mdi-arrow-left"
-      variant="text"
-      aria-label="Voltar para o monitoramento"
-      :to="{ name: 'monitoring' }"
-    />
-    <div class="topbar__brand">
-      <v-icon icon="mdi-scale-balance" color="primary" size="22" />
-      <span class="topbar__name">Curadoria</span>
-    </div>
-
-    <v-spacer />
-
-    <span v-if="sample.length" class="topbar__progress">
-      {{ Math.min(index + 1, sample.length) }} / {{ sample.length }}
-    </span>
-
-    <v-btn
-      variant="text"
-      prepend-icon="mdi-bug-outline"
-      class="ml-2"
-      :to="{ name: 'defects' }"
+  <div>
+    <PageHeader
+      title="Curadoria · Amostragem"
+      subtitle="Amostra estratificada: metade sinalizada, metade não."
     >
-      Defeitos
-    </v-btn>
-
-    <v-btn
-      variant="text"
-      prepend-icon="mdi-shuffle-variant"
-      :loading="isLoading"
-      @click="load()"
-    >
-      Nova amostra
-    </v-btn>
-  </v-app-bar>
-
-  <v-main class="main">
-    <div class="page">
-      <v-alert
-        v-if="error"
-        type="error"
-        variant="tonal"
-        density="comfortable"
-        class="mb-5"
-      >
-        {{ error }}
-      </v-alert>
-
-      <section class="metrics">
-        <div class="metric">
-          <span class="metric__label">Precisão dos detectores</span>
-          <span class="metric__value">{{ asPercent(stats?.precision) }}</span>
-          <span class="metric__hint">
-            {{ stats?.flagged?.defects ?? 0 }} defeitos em
-            {{ stats?.flagged?.reviewed ?? 0 }} sinalizadas revisadas
-          </span>
-        </div>
-        <div class="metric">
-          <span class="metric__label">Recall estimado</span>
-          <span class="metric__value">
-            {{ asPercent(stats?.estimated_recall) }}
-          </span>
-          <span class="metric__hint">
-            {{ stats?.unflagged?.defects ?? 0 }} defeitos encontrados em
-            {{ stats?.unflagged?.reviewed ?? 0 }} não sinalizadas
-          </span>
-        </div>
-        <div class="metric">
-          <span class="metric__label">Revisadas nesta sessão</span>
-          <span class="metric__value">{{ reviewedCount }}</span>
-          <span class="metric__hint">
-            amostra estratificada: metade sinalizada, metade não
-          </span>
-        </div>
-      </section>
-
-      <v-card v-if="isLoading" flat class="panel panel--quiet">
-        <v-progress-circular indeterminate size="22" />
-        <span>Sorteando amostra…</span>
-      </v-card>
-
-      <v-card v-else-if="isDone" flat class="panel panel--quiet">
-        <v-icon icon="mdi-check-circle-outline" size="22" color="primary" />
-        <span>Amostra revisada. Sorteie outra para continuar.</span>
-      </v-card>
-
-      <v-card v-else-if="!current" flat class="panel panel--quiet">
-        <v-icon icon="mdi-inbox-outline" size="22" />
-        <span>
-          Nada para revisar. Gere tráfego com
-          <code>scripts/generate_traffic.py</code>.
+      <template #actions>
+        <span v-if="sample.length" class="progress">
+          {{ Math.min(index + 1, sample.length) }} / {{ sample.length }}
         </span>
+        <v-btn
+          variant="text"
+          prepend-icon="mdi-shuffle-variant"
+          :loading="isLoading"
+          @click="draw()"
+        >
+          Nova amostra
+        </v-btn>
+      </template>
+    </PageHeader>
+
+    <v-alert
+      v-if="error"
+      type="error"
+      variant="tonal"
+      density="comfortable"
+      class="mb-5"
+    >
+      {{ error }}
+    </v-alert>
+
+    <section class="metrics">
+      <div class="metric">
+        <span class="metric__label">Nesta amostra</span>
+        <span class="metric__value">
+          {{ Math.min(index + 1, sample.length) }} de {{ sample.length }}
+        </span>
+        <span class="metric__hint">
+          amostra estratificada: metade sinalizada, metade não
+        </span>
+      </div>
+      <div class="metric">
+        <span class="metric__label">Já julgadas</span>
+        <span class="metric__value">{{ reviewedCount }}</span>
+        <span class="metric__hint">
+          revisar uma amostra basta — não é preciso julgar toda a base
+        </span>
+      </div>
+    </section>
+
+    <v-card v-if="isLoading" flat class="panel panel--quiet">
+      <v-progress-circular indeterminate size="22" />
+      <span>Sorteando amostra…</span>
+    </v-card>
+
+    <v-card v-else-if="isDone" flat class="panel panel--quiet">
+      <v-icon icon="mdi-check-circle-outline" size="22" color="primary" />
+      <span>Amostra revisada. Sorteie outra para continuar.</span>
+    </v-card>
+
+    <v-card v-else-if="!current" flat class="panel panel--quiet">
+      <v-icon icon="mdi-inbox-outline" size="22" />
+      <span>
+        Nada para revisar. Gere tráfego com
+        <code>scripts/generate_traffic.py</code>.
+      </span>
+    </v-card>
+
+    <template v-else>
+      <v-card flat class="panel">
+        <ReviewSubject
+          :item="current"
+          :signals-revealed="signalsRevealed"
+          @reveal="revealSignals"
+        />
       </v-card>
 
-      <template v-else>
-        <v-card flat class="panel">
-          <ReviewSubject
-            :item="current"
-            :signals-revealed="signalsRevealed"
-            @reveal="revealSignals"
-          />
-        </v-card>
+      <v-textarea
+        v-model="rationale"
+        label="Justificativa (opcional)"
+        rows="2"
+        auto-grow
+        class="mt-4"
+      />
 
-        <v-textarea
-          v-model="rationale"
-          label="Justificativa (opcional)"
-          rows="2"
-          auto-grow
-          class="mt-4"
-        />
+      <div class="actions">
+        <v-btn
+          color="error"
+          :loading="isSaving"
+          prepend-icon="mdi-bug-outline"
+          @click="judge(VERDICT_DEFECT)"
+        >
+          Defeito <kbd class="kbd">d</kbd>
+        </v-btn>
+        <v-btn
+          variant="tonal"
+          :loading="isSaving"
+          prepend-icon="mdi-weather-cloudy"
+          @click="judge(VERDICT_NOISE)"
+        >
+          Ruído <kbd class="kbd">n</kbd>
+        </v-btn>
+        <v-spacer />
+        <v-btn variant="text" @click="skip">
+          Pular <kbd class="kbd">s</kbd>
+        </v-btn>
+      </div>
 
-        <div class="actions">
-          <v-btn
-            color="error"
-            :loading="isSaving"
-            prepend-icon="mdi-bug-outline"
-            @click="judge(VERDICT_DEFECT)"
-          >
-            Defeito <kbd class="kbd">d</kbd>
-          </v-btn>
-          <v-btn
-            variant="tonal"
-            :loading="isSaving"
-            prepend-icon="mdi-weather-cloudy"
-            @click="judge(VERDICT_NOISE)"
-          >
-            Ruído <kbd class="kbd">n</kbd>
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="skip">
-            Pular <kbd class="kbd">s</kbd>
-          </v-btn>
-        </div>
-
-        <p class="hint">
-          Os sinais ficam escondidos até você julgar — ver o que os
-          detectores acharam antes ancoraria o julgamento que serve para
-          medi-los. <kbd class="kbd">r</kbd> revela.
-        </p>
-      </template>
-    </div>
-  </v-main>
+      <p class="hint">
+        Os sinais ficam escondidos até você julgar — ver o que os detectores
+        acharam antes ancoraria o julgamento que serve para medi-los.
+        <kbd class="kbd">r</kbd> revela.
+      </p>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-.main {
-  min-height: 100dvh;
-}
-
-.page {
-  max-width: 820px;
-  margin: 0 auto;
-  padding: 26px 20px 72px;
-}
-
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -285,27 +248,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   line-height: 1.5;
 }
 
-.topbar {
-  background: rgba(var(--v-theme-surface), 0.82) !important;
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.topbar__brand {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding-inline: 6px;
-}
-
-.topbar__name {
-  font-family: var(--divination-font-display, inherit);
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-
-.topbar__progress {
+.progress {
   font-size: 0.82rem;
   opacity: 0.62;
   font-variant-numeric: tabular-nums;

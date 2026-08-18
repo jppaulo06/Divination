@@ -111,7 +111,7 @@ const showPersonalityError = computed({
       icon="mdi-radar"
       variant="text"
       aria-label="Abrir o painel de monitoramento"
-      :to="{ name: 'monitoring' }"
+      :to="{ name: 'admin-monitoring' }"
     />
   </v-app-bar>
 
