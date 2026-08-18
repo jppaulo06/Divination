@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   bins: { type: Array, required: true },
@@ -12,7 +12,7 @@ const hasBins = computed(() => props.bins.length > 0)
 
 // A zero-count bin has nothing to draw; min-height would otherwise render
 // it as a stub that reads as a real observation.
-const filledBins = computed(() => props.bins.filter((bin) => bin.count > 0))
+const filledBins = computed(() => props.bins.filter(bin => bin.count > 0))
 
 /**
  * The domain always includes the threshold, even when no score reaches
@@ -23,8 +23,8 @@ const filledBins = computed(() => props.bins.filter((bin) => bin.count > 0))
 const domain = computed(() => {
   if (!hasBins.value) return { min: 0, max: 1, span: 1 }
 
-  const lows = props.bins.map((bin) => bin.lo)
-  const highs = props.bins.map((bin) => bin.hi)
+  const lows = props.bins.map(bin => bin.lo)
+  const highs = props.bins.map(bin => bin.hi)
   let min = Math.min(...lows)
   let max = Math.max(...highs)
 
@@ -43,17 +43,38 @@ const peak = computed(() =>
   props.bins.reduce((highest, bin) => Math.max(highest, bin.count), 0),
 )
 
-function position(bin) {
+//: Headroom above the tallest bar so its count label has somewhere to sit.
+const MAX_BAR_HEIGHT = 86
+
+function column(bin) {
   const { min, span } = domain.value
   const left = ((bin.lo - min) / span) * 100
   // A single-valued distribution collapses to zero width; give it a
   // visible column instead of an invisible sliver.
   const width = Math.max(((bin.hi - bin.lo) / span) * 100, 4)
-  return {
-    left: `${left}%`,
-    width: `${width}%`,
-    height: `${peak.value ? (bin.count / peak.value) * 100 : 0}%`,
-  }
+  return { left: `${left}%`, width: `${width}%` }
+}
+
+function barHeight(bin) {
+  if (!peak.value) return '0%'
+  return `${(bin.count / peak.value) * MAX_BAR_HEIGHT}%`
+}
+
+const hovered = ref(null)
+
+/**
+ * Which side the hover readout aligns to.
+ *
+ * Centred by default, but pinned inward at the extremes: a readout
+ * centred on the first or last column overflows the panel, the same way
+ * the threshold label did.
+ */
+function readoutAlignment(bin) {
+  const { min, span } = domain.value
+  const centre = ((bin.lo + bin.hi) / 2 - min) / span
+  if (centre < 0.15) return 'start'
+  if (centre > 0.85) return 'end'
+  return 'centre'
 }
 
 const thresholdOffset = computed(() => {
@@ -76,7 +97,7 @@ const allBelow = computed(
   () => props.count > 0 && props.belowThreshold === props.count,
 )
 
-const format = (value) => value.toFixed(3)
+const format = value => value.toFixed(3)
 </script>
 
 <template>
@@ -86,13 +107,34 @@ const format = (value) => value.toFixed(3)
 
   <div v-else class="hist">
     <div class="hist__plot">
+      <!--
+        The whole column is the hit target, not just the bar: a short bar
+        is a few pixels tall and would be near-impossible to hover.
+      -->
       <div
         v-for="(bin, index) in filledBins"
         :key="index"
-        class="hist__bar"
-        :style="position(bin)"
-        :title="`${format(bin.lo)}–${format(bin.hi)}: ${bin.count} interações`"
-      />
+        class="hist__col"
+        :class="{ 'hist__col--active': hovered === index }"
+        :style="column(bin)"
+        @mouseenter="hovered = index"
+        @mouseleave="hovered = null"
+      >
+        <span class="hist__count">{{ bin.count }}</span>
+        <span class="hist__bar" :style="{ height: barHeight(bin) }" />
+
+        <!-- Own element rather than a title attribute, which the browser
+             delays by about a second before showing. -->
+        <span
+          v-if="hovered === index"
+          class="hist__readout"
+          :class="`hist__readout--${readoutAlignment(bin)}`"
+        >
+          {{ format(bin.lo) }}–{{ format(bin.hi) }}
+          <strong>{{ bin.count }}</strong>
+          {{ bin.count === 1 ? 'interação' : 'interações' }}
+        </span>
+      </div>
 
       <div
         v-if="thresholdLeft"
@@ -117,8 +159,8 @@ const format = (value) => value.toFixed(3)
     <p v-if="allBelow" class="hist__note">
       <v-icon icon="mdi-alert-outline" size="14" />
       Todos os {{ count }} scores estão abaixo do limiar, então
-      <code>weak_retrieval</code> dispara em 100% do tráfego — é uma
-      constante, não um sinal.
+      <code>weak_retrieval</code> dispara em 100% do tráfego — é uma constante,
+      não um sinal.
     </p>
   </div>
 </template>
@@ -130,22 +172,72 @@ const format = (value) => value.toFixed(3)
      ratio instead of flattening into a wide sliver. */
   height: var(--hist-height, 240px);
   border-bottom: 1px solid rgba(var(--v-border-color), 0.35);
+  /* The hover readout sits above its column, so nothing here may clip. */
+  overflow: visible;
+}
+
+.hist__col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  /* 2px surface gap between neighbouring fills. */
+  box-sizing: border-box;
+  border-inline: 1px solid transparent;
 }
 
 .hist__bar {
-  position: absolute;
-  bottom: 0;
   min-height: 2px;
-  /* 2px surface gap between neighbouring fills. */
-  box-sizing: border-box;
-  border-inline: 1px solid rgb(var(--v-theme-surface));
   border-radius: 4px 4px 0 0;
   background: var(--viz-series-1);
   transition: filter 0.15s ease;
 }
 
-.hist__bar:hover {
-  filter: brightness(1.25);
+.hist__col--active .hist__bar {
+  filter: brightness(1.3);
+}
+
+/* Direct label so the magnitude reads without hovering at all. */
+.hist__count {
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+}
+
+.hist__col--active .hist__count {
+  opacity: 1;
+}
+
+.hist__readout {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  z-index: 2;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  background: rgb(var(--v-theme-surface-bright));
+  border: 1px solid rgba(var(--v-border-color), 0.5);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 45%);
+}
+
+.hist__readout--centre {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.hist__readout--start {
+  left: 0;
+}
+
+.hist__readout--end {
+  right: 0;
 }
 
 .hist__threshold {

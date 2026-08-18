@@ -118,7 +118,8 @@ describe('ScoreHistogram', () => {
       },
     })
 
-    const style = wrapper.find('.hist__bar').attributes('style')
+    // Width lives on the column that wraps the bar.
+    const style = wrapper.find('.hist__col').attributes('style')
     expect(style).toMatch(/width:\s*[\d.]+%/)
     expect(style).not.toContain('width: 0%')
   })
@@ -170,5 +171,99 @@ describe('ScoreHistogram regressions found by looking at it', () => {
     expect(
       wrapper.find('.hist__threshold-label').classes(),
     ).not.toContain('hist__threshold-label--flipped')
+  })
+})
+
+describe('ScoreHistogram readability', () => {
+  const bins = [
+    { lo: 0.58, hi: 0.6, count: 2 },
+    { lo: 0.6, hi: 0.62, count: 0 },
+    { lo: 0.62, hi: 0.64, count: 5 },
+  ]
+
+  const mounted = () =>
+    mount(ScoreHistogram, {
+      props: { bins, threshold: 0.7, belowThreshold: 7, count: 7 },
+    })
+
+  it('labels every column with its count, so no hover is needed', () => {
+    const counts = mounted()
+      .findAll('.hist__count')
+      .map((node) => node.text())
+
+    expect(counts).toEqual(['2', '5'])
+  })
+
+  it('scales bars against the tallest, leaving headroom for the label', () => {
+    const heights = mounted()
+      .findAll('.hist__bar')
+      .map((bar) => Number(bar.attributes('style').match(/height:\s*([\d.]+)%/)[1]))
+
+    // The tallest stops short of the ceiling so its label has room.
+    expect(heights[1]).toBeLessThan(100)
+    expect(heights[0] / heights[1]).toBeCloseTo(2 / 5, 5)
+  })
+
+  it('shows a readout on hover without waiting for a native tooltip', async () => {
+    // The title attribute the bars used before is delayed ~1s by the
+    // browser, so the value is now an element the component controls.
+    const wrapper = mounted()
+    expect(wrapper.find('.hist__readout').exists()).toBe(false)
+
+    await wrapper.findAll('.hist__col')[0].trigger('mouseenter')
+
+    const readout = wrapper.find('.hist__readout')
+    expect(readout.exists()).toBe(true)
+    expect(readout.text()).toContain('2')
+    expect(readout.text()).toContain('interações')
+  })
+
+  it('hides the readout again on leave', async () => {
+    const wrapper = mounted()
+    const column = wrapper.findAll('.hist__col')[0]
+
+    await column.trigger('mouseenter')
+    await column.trigger('mouseleave')
+
+    expect(wrapper.find('.hist__readout').exists()).toBe(false)
+  })
+
+  it('uses the singular for a bin holding one interaction', async () => {
+    const wrapper = mount(ScoreHistogram, {
+      props: {
+        bins: [{ lo: 0.6, hi: 0.62, count: 1 }],
+        threshold: 0.7,
+        belowThreshold: 1,
+        count: 1,
+      },
+    })
+
+    await wrapper.find('.hist__col').trigger('mouseenter')
+
+    expect(wrapper.find('.hist__readout').text()).toContain('interação')
+  })
+
+  it('pins the readout inward at the edges so it cannot overflow', async () => {
+    const wrapper = mounted()
+    const columns = wrapper.findAll('.hist__col')
+
+    await columns[0].trigger('mouseenter')
+    expect(wrapper.find('.hist__readout').classes()).toContain(
+      'hist__readout--start',
+    )
+    await columns[0].trigger('mouseleave')
+
+    await columns[1].trigger('mouseenter')
+    expect(wrapper.find('.hist__readout').classes()).not.toContain(
+      'hist__readout--start',
+    )
+  })
+
+  it('makes the whole column the hit target, not just the bar', () => {
+    // A two-pixel bar is effectively unhoverable, so the hover handler
+    // lives on a full-height column instead.
+    const column = mounted().find('.hist__col')
+
+    expect(column.attributes('style')).not.toContain('height')
   })
 })
