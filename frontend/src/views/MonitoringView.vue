@@ -3,6 +3,7 @@ import { onMounted } from 'vue'
 
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BarList from '@/components/monitoring/BarList.vue'
+import ChartNote from '@/components/monitoring/ChartNote.vue'
 import ScoreHistogram from '@/components/monitoring/ScoreHistogram.vue'
 import StatTile from '@/components/monitoring/StatTile.vue'
 import { useMonitoring } from '@/composables/useMonitoring'
@@ -99,6 +100,18 @@ onMounted(load)
       <v-card flat class="panel">
         <h2 class="panel__title">Sinais por tipo</h2>
         <p class="panel__sub">Quantas vezes cada detector disparou.</p>
+        <ChartNote>
+          <p>
+            Conta <strong>sinais</strong>, não interações: uma mesma resposta
+            pode disparar vários detectores, então a soma aqui passa do número
+            de interações sinalizadas.
+          </p>
+          <p class="note__warn">
+            Um sinal é uma <strong>suspeita</strong>, não um defeito. Esta etapa
+            é calibrada para não deixar nada passar, e aceita errar para mais —
+            separar ruído de defeito real é o trabalho da curadoria.
+          </p>
+        </ChartNote>
         <BarList
           :rows="signalRows"
           empty-text="Nenhum sinal levantado ainda."
@@ -110,6 +123,37 @@ onMounted(load)
         <p class="panel__sub">
           Um score por interação — o melhor chunk que o retriever achou.
         </p>
+        <ChartNote>
+          <dl>
+            <dt>Cada coluna</dt>
+            <dd>
+              uma faixa de score; o número em cima é quantas interações caíram
+              nela.
+            </dd>
+            <dt>O score</dt>
+            <dd>
+              semelhança de 0 a 1 entre a pergunta e o texto do chunk, calculada
+              por embeddings. Cada resposta recupera 4 chunks e só o melhor
+              entra aqui.
+            </dd>
+            <dt>A linha tracejada</dt>
+            <dd>
+              o limiar do detector <code>weak_retrieval</code>: tudo à esquerda
+              dela é sinalizado para curadoria.
+            </dd>
+          </dl>
+          <p style="margin-top: 8px">
+            Serve para calibrar o limiar. O ideal é a linha cair num
+            <strong>vale</strong> entre dois grupos. Se todas as colunas ficarem
+            de um só lado, o detector dispara em todo o tráfego — é uma
+            constante, não um sinal.
+          </p>
+          <p class="note__warn">
+            Score alto <strong>não</strong> quer dizer resposta boa: ele só diz
+            que o retriever achou algo parecido, não que o modelo usou aquilo
+            direito. Qualidade de resposta se vê em Defeitos.
+          </p>
+        </ChartNote>
         <ScoreHistogram
           :bins="summary?.retrieval_scores?.bins ?? []"
           :threshold="summary?.retrieval_scores?.threshold ?? null"
@@ -123,6 +167,24 @@ onMounted(load)
         <p class="panel__sub">
           Execuções de eval e tráfego sintético ficam marcados, não excluídos.
         </p>
+        <ChartNote>
+          <dl>
+            <dt>production</dt>
+            <dd>uso real, pelo chat.</dd>
+            <dt>synthetic</dt>
+            <dd>
+              gerado por <code>scripts/generate_traffic.py</code>, para a camada
+              ter o que observar antes de existirem usuários.
+            </dd>
+            <dt>eval</dt>
+            <dd>execuções da suíte de testes.</dd>
+          </dl>
+          <p style="margin-top: 8px">
+            Marcados em vez de excluídos: assim é possível comparar a
+            distribuição do que os testes exercitam com a do uso real, e ver o
+            que os goldens não cobrem.
+          </p>
+        </ChartNote>
         <BarList :rows="sourceRows" empty-text="Sem tráfego registrado." />
       </v-card>
     </section>

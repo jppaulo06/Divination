@@ -3,6 +3,7 @@ import { onMounted } from 'vue'
 
 import PageHeader from '@/components/admin/PageHeader.vue'
 import BarList from '@/components/monitoring/BarList.vue'
+import ChartNote from '@/components/monitoring/ChartNote.vue'
 import StatTile from '@/components/monitoring/StatTile.vue'
 import { signalLabel } from '@/composables/useMonitoring'
 import { useDefects } from '@/composables/useDefects'
@@ -93,6 +94,25 @@ function score(value) {
           Quais detectores marcaram cada defeito. Vários defeitos com a mesma
           assinatura são uma causa comum, não coincidência. Clique para filtrar.
         </p>
+        <ChartNote>
+          <p>
+            A assinatura é o conjunto de detectores que dispararam naquela
+            interação. Ela agrupa os defeitos por sintoma, e o sintoma costuma
+            indicar onde está o conserto.
+          </p>
+          <dl>
+            <dt>(nenhum sinal)</dt>
+            <dd>
+              ponto cego: nenhum detector marcou. Ajustar os detectores
+              existentes não acharia estes casos — eles pedem um detector novo.
+            </dd>
+          </dl>
+          <p class="note__warn">
+            Só aparecem interações já julgadas por uma pessoa, então o total
+            depende de quanto foi revisado — não é a quantidade de defeitos que
+            existe.
+          </p>
+        </ChartNote>
         <BarList
           :rows="groups"
           :active-key="signatureFilter"
