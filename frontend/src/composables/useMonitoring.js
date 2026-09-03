@@ -12,6 +12,57 @@ const SIGNAL_LABELS = {
   user_negative_feedback: 'Avaliação negativa',
 }
 
+const round2 = (value) =>
+  typeof value === 'number' ? value.toFixed(2) : String(value ?? '—')
+
+const quoted = (values) => values.map((value) => `“${value}”`).join('; ')
+
+/**
+ * One line naming what a detector actually found, so a reviewer knows
+ * where to look. Empty when the signal carries nothing locatable.
+ */
+export function signalDetail(signal) {
+  const details = signal?.details ?? {}
+
+  switch (signal?.type) {
+    case 'weak_retrieval':
+      if (details.reason) return 'Nenhum trecho recuperado.'
+      return (
+        `Melhor trecho ${round2(details.top_score)}, abaixo do limite ` +
+        `${round2(details.threshold)} (${details.chunk_count ?? 0} trechos).`
+      )
+
+    case 'unsupported_claim': {
+      const values = [
+        ...(details.unsupported_dice ?? []),
+        ...(details.unsupported_dcs ?? []),
+      ]
+      if (!values.length) return ''
+      return `Sem apoio no contexto: ${values.join(', ')}.`
+    }
+
+    case 'refusal_or_hedge':
+      if (!details.matches?.length) return ''
+      return `Ressalvas na resposta: ${quoted(details.matches)}.`
+
+    case 'format_guardrail_violation':
+      if (details.reason) return 'Resposta vazia.'
+      return `Não termina com “${details.required_closing}”.`
+
+    case 'repeated_question': {
+      const share = Math.round((details.similarity ?? 0) * 100)
+      if (!details.prior_question) return ''
+      return `${share}% semelhante a “${details.prior_question}”.`
+    }
+
+    case 'user_negative_feedback':
+      return 'O usuário avaliou esta resposta como ruim.'
+
+    default:
+      return ''
+  }
+}
+
 export function signalLabel(type) {
   return SIGNAL_LABELS[type] ?? type
 }

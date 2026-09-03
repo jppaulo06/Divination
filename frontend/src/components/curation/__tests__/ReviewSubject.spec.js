@@ -34,6 +34,7 @@ function item(subjectIndex, extra = {}) {
     corpus_version: 'v1',
     retrieval_context: ['chunk'],
     signals: [{ type: 'weak_retrieval' }],
+    feedback: [],
     ...extra,
   }
 }
@@ -88,8 +89,46 @@ describe('ReviewSubject history', () => {
     expect(wrapper.text()).toContain('pergunta 0')
   })
 
-  it('keeps signals hidden until revealed', () => {
-    const wrapper = mount({ item: item(2), signalsRevealed: false })
-    expect(wrapper.text()).toContain('Revelar sinais (1)')
+  it('names the detected problem without being asked', () => {
+    const wrapper = mount({ item: item(2) })
+
+    expect(wrapper.find('.subject__signals').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Problema detectado')
+    expect(wrapper.text()).toContain('Retrieval fraco')
+    expect(wrapper.text()).not.toContain('Revelar sinais')
+  })
+
+  it('spells out where to look, not just the category', () => {
+    const wrapper = mount({
+      item: item(2, {
+        signals: [
+          {
+            type: 'unsupported_claim',
+            details: { unsupported_dice: ['2d6'], unsupported_dcs: [] },
+          },
+        ],
+      }),
+    })
+
+    expect(wrapper.text()).toContain('Número sem suporte')
+    expect(wrapper.text()).toContain('Sem apoio no contexto: 2d6.')
+  })
+
+  it('shows the category alone when the signal has no locatable detail', () => {
+    const wrapper = mount({
+      item: item(2, { signals: [{ type: 'brand_new', details: {} }] }),
+    })
+
+    expect(wrapper.find('.subject__findings').text()).toBe('brand_new')
+    expect(wrapper.find('.subject__finding-detail').exists()).toBe(false)
+  })
+
+  it('says nothing about signals when none fired', () => {
+    const wrapper = mount({ item: item(2, { signals: [] }) })
+
+    expect(wrapper.find('.subject__signals').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Problema detectado')
+    // Announcing the absence would say the detectors consider this fine.
+    expect(wrapper.text()).not.toContain('Nenhum sinal')
   })
 })

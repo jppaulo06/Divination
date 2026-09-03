@@ -18,13 +18,12 @@ const {
   isSaving,
   error,
   rationale,
-  signalsRevealed,
+  hasSignals,
   reviewedCount,
   draw,
   restore,
   judge,
   skip,
-  revealSignals,
 } = useCuration()
 
 /**
@@ -41,7 +40,6 @@ function onKey(event) {
   if (key === 'd') judge(VERDICT_DEFECT)
   else if (key === 'n') judge(VERDICT_NOISE)
   else if (key === 's' || key === 'arrowright') skip()
-  else if (key === 'r') revealSignals()
   else return
 
   event.preventDefault()
@@ -127,11 +125,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
     <template v-else>
       <v-card flat class="panel">
-        <ReviewSubject
-          :item="current"
-          :signals-revealed="signalsRevealed"
-          @reveal="revealSignals"
-        />
+        <ReviewSubject :item="current" />
       </v-card>
 
       <v-textarea
@@ -149,15 +143,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           prepend-icon="mdi-bug-outline"
           @click="judge(VERDICT_DEFECT)"
         >
-          Defeito <kbd class="kbd">d</kbd>
+          {{ hasSignals ? 'Aceitar' : 'Tem defeito' }}
+          <kbd class="kbd">d</kbd>
         </v-btn>
         <v-btn
           variant="tonal"
           :loading="isSaving"
-          prepend-icon="mdi-weather-cloudy"
+          :prepend-icon="hasSignals ? 'mdi-close' : 'mdi-check'"
           @click="judge(VERDICT_NOISE)"
         >
-          Ruído <kbd class="kbd">n</kbd>
+          {{ hasSignals ? 'Rejeitar' : 'Está correta' }}
+          <kbd class="kbd">n</kbd>
         </v-btn>
         <v-spacer />
         <v-btn variant="text" @click="skip">
@@ -166,9 +162,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       </div>
 
       <p class="hint">
-        Os sinais ficam escondidos até você julgar — ver o que os detectores
-        acharam antes ancoraria o julgamento que serve para medi-los.
-        <kbd class="kbd">r</kbd> revela.
+        {{
+          hasSignals
+            ? 'Aceitar confirma que o problema apontado é real; rejeitar marca o sinal como falso positivo.'
+            : 'Nenhum detector marcou esta interação — julgue a resposta pelo seu conteúdo.'
+        }}
       </p>
     </template>
   </div>

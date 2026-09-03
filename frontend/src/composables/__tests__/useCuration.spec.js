@@ -51,12 +51,21 @@ describe('useCuration', () => {
     expect(curation.sample.value).toHaveLength(2)
   })
 
-  it('hides signals until the reviewer asks', async () => {
-    const curation = await loaded()
+  it('reports whether the current item carries a signal', async () => {
+    const flagged = { ...item('a'), signals: [{ type: 'weak_retrieval' }] }
+    const curation = await loaded([flagged, item('b', 'unflagged')])
 
-    expect(curation.signalsRevealed.value).toBe(false)
-    curation.revealSignals()
-    expect(curation.signalsRevealed.value).toBe(true)
+    expect(curation.hasSignals.value).toBe(true)
+    curation.skip()
+    expect(curation.hasSignals.value).toBe(false)
+  })
+
+  it('reports no signal when the sample is exhausted', async () => {
+    const curation = await loaded([item('a')])
+    curation.skip()
+
+    expect(curation.current.value).toBeNull()
+    expect(curation.hasSignals.value).toBe(false)
   })
 
   it('records a verdict and advances', async () => {
@@ -88,16 +97,14 @@ describe('useCuration', () => {
     })
   })
 
-  it('clears the rationale and re-hides signals between items', async () => {
+  it('clears the rationale between items', async () => {
     api.submitReview.mockResolvedValue(1)
     const curation = await loaded()
     curation.rationale.value = 'algo'
-    curation.revealSignals()
 
     await curation.judge(VERDICT_NOISE)
 
     expect(curation.rationale.value).toBe('')
-    expect(curation.signalsRevealed.value).toBe(false)
   })
 
 

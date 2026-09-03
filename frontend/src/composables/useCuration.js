@@ -46,14 +46,14 @@ export function useCuration() {
   const isSaving = ref(false)
   const error = ref('')
   const rationale = ref('')
-  // Signals stay hidden until a verdict is in: seeing them first anchors
-  // the reviewer, and an anchored judgement cannot measure the detectors.
-  const signalsRevealed = ref(false)
   const reviewedCount = ref(0)
 
   const current = computed(() => sample.value[index.value] ?? null)
   const remaining = computed(() =>
     Math.max(sample.value.length - index.value, 0),
+  )
+  const hasSignals = computed(
+    () => (current.value?.signals?.length ?? 0) > 0,
   )
   const isDone = computed(
     () => sample.value.length > 0 && index.value >= sample.value.length,
@@ -109,11 +109,6 @@ export function useCuration() {
 
   function resetTurn() {
     rationale.value = ''
-    signalsRevealed.value = false
-  }
-
-  function revealSignals() {
-    signalsRevealed.value = true
   }
 
   function skip() {
@@ -156,13 +151,12 @@ export function useCuration() {
     isSaving,
     error,
     rationale,
-    signalsRevealed,
+    hasSignals,
     reviewedCount,
     draw,
     restore,
     judge,
     skip,
-    revealSignals,
   }
 }
 
