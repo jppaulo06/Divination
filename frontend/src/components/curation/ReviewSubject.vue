@@ -1,19 +1,14 @@
 <script setup>
 import { computed } from 'vue'
 
-import { signalLabel } from '@/composables/useMonitoring'
+import { signalDetail, signalLabel } from '@/composables/useMonitoring'
 
 const props = defineProps({
   item: { type: Object, required: true },
-  signalsRevealed: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['reveal'])
-
-// Strictly earlier turns only. Filtering on !is_subject also returned the
-// turns that came *after* this one, which both mislabels them as history
-// and leaks the answer: a reviewer who sees the user re-ask downstream has
-// been told repeated_question fired before giving a verdict.
+// Strictly earlier turns: a later turn is not history, and showing one
+// reveals that the user re-asked.
 const priorTurns = computed(() =>
   props.item.thread.filter(
     (turn) => turn.turn_index < props.item.turn_index,
@@ -28,16 +23,11 @@ const historyLabel = computed(() =>
 const score = computed(() =>
   props.item.top_score === null ? '—' : props.item.top_score.toFixed(3),
 )
+const hasSignals = computed(() => props.item.signals.length > 0)
 </script>
 
 <template>
   <div class="subject">
-    <!--
-      Shown inline rather than behind an accordion: an answer like "sim, e
-      nesse caso o dano dobra" cannot be judged without the turns leading
-      to it, and repeated_question is thread-scoped, so a reviewer cannot
-      rule on that signal at all without seeing the history.
-    -->
     <section v-if="hasThread" class="subject__history">
       <h3 class="subject__history-title">Conversa até aqui · {{ historyLabel }}</h3>
       <div
@@ -80,52 +70,37 @@ const score = computed(() =>
           </ol>
         </v-expansion-panel-text>
       </v-expansion-panel>
-
     </v-expansion-panels>
 
-    <!--
-      Hidden until judged, so the detectors cannot anchor the verdict that
-      is supposed to be measuring them.
-    -->
-    <div class="subject__signals">
-      <v-btn
-        v-if="!signalsRevealed"
-        size="small"
-        variant="text"
-        prepend-icon="mdi-eye-off-outline"
-        @click="emit('reveal')"
-      >
-        Revelar sinais ({{ item.signals.length }})
-      </v-btn>
+    <!-- Absent when nothing fired: stating the absence anchors the
+         verdict on unflagged items. -->
+    <div v-if="hasSignals" class="subject__signals">
+      <h3 class="subject__signals-title">Problema detectado</h3>
 
-      <template v-else>
-        <p v-if="!item.signals.length" class="subject__none">
-          Nenhum sinal — os detectores não marcaram esta interação.
-        </p>
-        <div v-else class="subject__chips">
-          <v-chip
-            v-for="signal in item.signals"
-            :key="signal.type"
-            size="small"
-            variant="outlined"
-            label
-          >
+      <ul class="subject__findings">
+        <li v-for="signal in item.signals" :key="signal.type">
+          <v-icon icon="mdi-alert-outline" size="15" class="mr-1" />
+          <span class="subject__finding-type">
             {{ signalLabel(signal.type) }}
-          </v-chip>
-        </div>
-        <div v-if="item.feedback.length" class="subject__chips">
-          <v-chip
-            v-for="(entry, position) in item.feedback"
-            :key="position"
-            size="small"
-            variant="tonal"
-            label
-            :prepend-icon="entry.rating > 0 ? 'mdi-thumb-up' : 'mdi-thumb-down'"
-          >
-            {{ entry.comment || (entry.rating > 0 ? 'positivo' : 'negativo') }}
-          </v-chip>
-        </div>
-      </template>
+          </span>
+          <span v-if="signalDetail(signal)" class="subject__finding-detail">
+            {{ signalDetail(signal) }}
+          </span>
+        </li>
+      </ul>
+
+      <div v-if="item.feedback.length" class="subject__chips">
+        <v-chip
+          v-for="(entry, position) in item.feedback"
+          :key="position"
+          size="small"
+          variant="tonal"
+          label
+          :prepend-icon="entry.rating > 0 ? 'mdi-thumb-up' : 'mdi-thumb-down'"
+        >
+          {{ entry.comment || (entry.rating > 0 ? 'positivo' : 'negativo') }}
+        </v-chip>
+      </div>
     </div>
   </div>
 </template>
@@ -241,20 +216,56 @@ const score = computed(() =>
 }
 
 .subject__signals {
-  margin-top: 14px;
-  min-height: 36px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(var(--v-theme-warning), 0.08);
+  border: 1px solid rgba(var(--v-theme-warning), 0.35);
+}
+
+.subject__signals-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.subject__findings {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.subject__findings li {
+  font-size: 0.83rem;
+  line-height: 1.5;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.subject__findings li:last-child {
+  margin-bottom: 0;
+}
+
+.subject__finding-type {
+  font-weight: 600;
+}
+
+.subject__finding-detail {
+  opacity: 0.78;
+}
+
+.subject__finding-detail::before {
+  content: ' — ';
+  opacity: 0.5;
 }
 
 .subject__chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 6px;
-}
-
-.subject__none {
-  margin: 0;
-  font-size: 0.83rem;
-  opacity: 0.7;
+  margin-top: 8px;
 }
 </style>
