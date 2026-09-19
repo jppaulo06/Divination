@@ -117,6 +117,14 @@ Maritaca's rate limit (unlike the conversational suite, see below).
 
 ## 3. Multi-turn conversational suite (`test_divination_chat.py`)
 
+GitHub Actions schedules this suite every Monday at 06:00 UTC. Before
+installing dependencies or calling LLM APIs, it checks this workflow's run
+history for a successful `conversational-evals` job on the current commit
+and branch. If one exists, the scheduled evaluation is skipped. A skipped
+job does not count as a completed evaluation; new commits, failed evaluations,
+or missing history allow the suite to run. Manual runs always execute the
+suite, even if the commit has already been evaluated successfully.
+
 ```bash
 poetry run deepeval test run tests/evals/test_divination_chat.py \
   --identifier "iterating-on-rag-grounding-round-1" \
