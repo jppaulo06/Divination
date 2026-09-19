@@ -11,12 +11,67 @@ concurrency:
   group: conversational-eval-${{ github.workflow }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 defaults:
   run:
     working-directory: backend
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check whether this commit has already been evaluated
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Manual runs always allow an explicit re-evaluation.
+            if (context.eventName === 'workflow_dispatch') {
+              return true;
+            }
+
+            const runs = github.paginate.iterator(
+              github.rest.actions.listWorkflowRuns,
+              {
+                ...context.repo,
+                workflow_id: 'conversational-eval.yml',
+                branch: context.ref.replace('refs/heads/', ''),
+                head_sha: context.sha,
+                status: 'success',
+                per_page: 100,
+              },
+            );
+
+            for await (const { data } of runs) {
+              for (const run of data) {
+                if (run.id === context.runId) continue;
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  { ...context.repo, run_id: run.id, per_page: 100 },
+                );
+                // A skipped evaluation can also leave a successful workflow.
+                // Only an evaluation job that actually succeeded counts.
+                if (jobs.some(job =>
+                  job.name === 'conversational-evals' &&
+                  job.conclusion === 'success'
+                )) {
+                  core.info('Skipping: this commit was already evaluated successfully.');
+                  return false;
+                }
+              }
+            }
+
+            core.info('No successful evaluation found for this commit; running the suite.');
+            return true;
+
   conversational-evals:
+    needs: check-changes
+    if: needs.check-changes.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
