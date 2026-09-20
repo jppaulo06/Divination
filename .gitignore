@@ -1,3 +1,8 @@
 # Runtime data: Chroma collection and the monitoring database, both
 # rebuilt/repopulated locally.
 database/
+
+# Local CI state and Python runner caches.
+.ci-state/
+__pycache__/
+*.pyc

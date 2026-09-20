@@ -8,10 +8,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    working-directory: backend
-
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -31,20 +27,14 @@ jobs:
           path: backend/.venv
           key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
-      - name: Configure Poetry to use in-project venv
-        run: poetry config virtualenvs.in-project true
-
-      # Fails if poetry.lock no longer matches pyproject.toml, so a
-      # dependency edit committed without relocking is caught here rather
-      # than by an image build resolving to different versions.
-      - name: Check lock file is in sync
-        run: poetry check --lock
-
       - name: Install dependencies
-        run: poetry install --with dev
+        run: make ci-setup
 
       - name: Ruff lint
-        run: poetry run ruff check .
+        run: make lint
+
+      - name: Test portable CI runner
+        run: make runner-tests
 
   monitoring-tests:
     needs: lint
@@ -65,16 +55,13 @@ jobs:
           path: backend/.venv
           key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
-      - name: Configure Poetry to use in-project venv
-        run: poetry config virtualenvs.in-project true
-
       - name: Install dependencies
-        run: poetry install --with dev
+        run: make ci-setup
 
       # Offline and deterministic: detectors are pure functions and the
       # store tests use in-memory SQLite, so no API keys are needed.
       - name: Run monitoring tests
-        run: poetry run pytest tests/monitoring -q
+        run: make monitoring
 
   unit-evals:
     needs: lint
@@ -95,33 +82,18 @@ jobs:
           path: backend/.venv
           key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
-      - name: Configure Poetry to use in-project venv
-        run: poetry config virtualenvs.in-project true
-
       - name: Install dependencies
-        run: poetry install --with dev
-
-      # Settings.load() requires the API section too, even though the
-      # eval suite only exercises the security keys. HOST/PORT/ALLOWED_*
-      # aren't secret, so they're hardcoded here instead of stored as
-      # GitHub secrets.
-      - name: Write .env for tests
-        run: |
-          cat <<EOF > .env
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          MARITACA_API_KEY=${{ secrets.MARITACA_API_KEY }}
-          LANGCHAIN_API_KEY=${{ secrets.LANGCHAIN_API_KEY }}
-          HOST=0.0.0.0
-          PORT=8000
-          ALLOWED_ORIGINS=["http://localhost:3000"]
-          ALLOWED_METHODS=["GET","POST"]
-          ALLOWED_HEADERS=["*"]
-          EOF
+        run: make ci-setup
 
       - name: Run single-turn eval unit tests
-        run: >
-          poetry run deepeval test run tests/evals/test_answer_unit.py
-          --identifier "pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
-          --num-processes 3
-          --ignore-errors
-          --skip-on-missing-params
+        run: make eval
+        env:
+          CI_RUN_ID: pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARITACA_API_KEY: ${{ secrets.MARITACA_API_KEY }}
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+          HOST: 0.0.0.0
+          PORT: "8000"
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+          ALLOWED_METHODS: '["GET","POST"]'
+          ALLOWED_HEADERS: '["*"]'

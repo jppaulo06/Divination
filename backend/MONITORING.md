@@ -1,7 +1,7 @@
 # Monitoring layer
 
 Stage 2 of the CD4AI loop: record what production does, flag what looks
-wrong, and hand the flagged cases to curation (stage 3, not built yet).
+wrong, and hand candidate cases to human curation (stage 3).
 
 ## Why these five tables
 
@@ -268,8 +268,8 @@ GROUP BY i.id
 ```
 
 Implemented as `CandidateQuery.pending()` and exposed at
-`GET /v1/monitoring/candidates`. It is built now, before curation exists,
-because if it were awkward to express the schema would be wrong.
+`GET /v1/monitoring/candidates`. Human review is handled by the curation
+panel and the `/v1/curation` endpoints described above.
 
 "Awaiting review" is the *absence* of a `curation_reviews` row, not a
 status column on `interactions` — a status column would duplicate state
@@ -283,6 +283,15 @@ poetry run pytest tests/monitoring -q
 
 Offline and deterministic: detectors are pure functions and the store
 tests use in-memory SQLite. Runs in CI on every PR with no API keys.
+
+## Feeding regression tests
+
+Developers manually turn confirmed defects into cases in
+`tests/evals/.dataset.json`, defining the expected behavior and committing
+the case with the fix. See the
+[manual curation guide](tests/evals/README.md#adding-a-regression-case-manually).
+The testing stage uses each test's approval criteria; an aggregate pass-rate
+threshold is not required by this implementation.
 
 ## Not done yet
 
@@ -307,5 +316,3 @@ tests use in-memory SQLite. Runs in CI on every PR with no API keys.
 - **Thread-level coverage is thin.** Only `repeated_question` is
   thread-scoped; the conversational eval metrics have no production
   counterpart yet.
-- **Stage 1 is still a per-test gate**, not the cumulative pass-rate gate
-  the pattern specifies.
