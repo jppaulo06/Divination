@@ -117,13 +117,16 @@ Maritaca's rate limit (unlike the conversational suite, see below).
 
 ## 3. Multi-turn conversational suite (`test_divination_chat.py`)
 
-GitHub Actions schedules this suite every Monday at 06:00 UTC. Before
-installing dependencies or calling LLM APIs, it checks this workflow's run
-history for a successful `conversational-evals` job on the current commit
-and branch. If one exists, the scheduled evaluation is skipped. A skipped
-job does not count as a completed evaluation; new commits, failed evaluations,
-or missing history allow the suite to run. Manual runs always execute the
-suite, even if the commit has already been evaluated successfully.
+From the repository root, use `make eval-conversations` to force a run or
+`make eval-conversations-if-changed` to skip a commit already recorded as
+successful in `.ci-state/conversations.json`. Scheduled runs require a clean
+checkout; failed evaluations never advance this record. Any scheduler can
+call these commands. GitHub Actions calls them every Monday at 06:00 UTC
+and on manual dispatch, persisting state as an Actions artifact. Manual
+dispatch always forces a run; missing or expired state allows another evaluation.
+See the [CI guide](../../../docs/ci.md) for environment
+setup, optional hooks, state storage and a cron example. The direct DeepEval
+command below always runs and does not update the runner's state file.
 
 ```bash
 poetry run deepeval test run tests/evals/test_divination_chat.py \
@@ -179,6 +182,24 @@ tier with higher rate limits.
 - `Rules Answer Style` (`ConversationalGEval`) — product-specific check for
   the system prompt's format requirements (detailed, grounded, ends with
   "thanks for asking!").
+
+## Adding a regression case manually
+
+Turning a confirmed defect into a test is a manual step in this project:
+
+1. Review the question, answer and retrieved context in the curation panel.
+   Decide what the correct behavior should have been.
+2. Add a case to `tests/evals/.dataset.json`, following an existing entry's
+   structure. Give it a unique name, an opening question in `turns`, a
+   `scenario` and an `expected_outcome`. Remove personal or irrelevant data.
+3. From the repository root, run `make eval` to check whether the case exposes
+   the defect, then run it again with the fix. Use `make eval-conversations`
+   when follow-up interactions matter. Both commands use paid APIs.
+4. Commit the case with the fix. Both evaluation suites read this dataset,
+   so the case will participate in subsequent regression runs.
+
+Review and case creation remain human decisions. Approval uses each test's
+criteria; this implementation does not require an aggregate success-rate rule.
 
 ## Notes
 

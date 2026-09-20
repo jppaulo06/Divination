@@ -1,87 +1,56 @@
-# Divination - MAC0499 Capstone Project
+# Divination — CD4AI case study
 
-This reposity contains the project for "MAC0499 - Trabalho de Formatura Supervisionado"
+This fork applies **CD4AI (Continuous Delivery for Artificial Intelligence)**
+as a practical example for a MAC0499 capstone project. Its goal is to use
+problems found during real usage to improve regression tests for an AI system.
 
-## Description
+The application is Divination, a D&D assistant that uses retrieval-augmented
+generation (RAG). It was originally developed by Luis Carlos; see his
+[original monograph](https://luizcarlosdk.github.io/capstone-project/MonographLuizCarlos.pdf).
+This fork adds testing, monitoring and curation to explore the CD4AI cycle.
 
-The Divination project provides an application that uses the fantasy tabletop role-playing game Dungeons and Dragons (D&D) sourcebooks to help DMs manage players’ adventures.
+## How CD4AI works here
 
-The system is divided into a front-end and a back-end. The front-end uses the Vue3js framework to provide a user chat interface, and the back-end uses Python+FASTAPI powered by ChatGPT-4o LLM
+| Stage | What this project does |
+| --- | --- |
+| **Testing** | Runs code checks and chatbot evaluations to detect regressions. Approval follows the criteria of each test. |
+| **Monitoring** | Records interactions and user feedback, and flags possible failures with lightweight detectors. |
+| **Curation** | Supports human review to distinguish real defects from noise. Developers manually turn confirmed defects into new regression cases. |
 
-To answer the questions as faithfully as possible, avoiding LLM Hallucinations, the back-end uses Retrieval-Augmented Generation (RAG) as a structure; this structure reads external data from the D&D Free Rules (2024) page and stores it on a Vector Store Database. When a query is received in the back-end, the RAG retrieves the most relevant chunks from the vector store and sends them to the rest of the system to use as context to give the most accurate answer to the user
+To close the cycle, a developer defines the expected behavior for a confirmed
+problem, adds a case to the [evaluation dataset](backend/tests/evals/.dataset.json)
+and runs the evaluations alongside the fix. That case becomes part of future
+regression runs. See the [manual curation guide](backend/tests/evals/README.md#adding-a-regression-case-manually).
 
-## Monograph
+## Try the checks
 
-The monograph for this capstone project is available on: https://luizcarlosdk.github.io/capstone-project/MonographLuizCarlos.pdf
+With Git, Python 3.10+, Poetry 1.6.1 and Make installed on Linux, macOS or WSL,
+run from the repository root:
 
-## How to Run
-
-Copy `backend/.env.sample` to `backend/.env` and fill in the API keys first.
-
-There are two profiles. Every service belongs to one, so plain
-`docker compose up` starts nothing — pick one.
-
-### Development (hot reload)
-
-Source is bind-mounted; vite and uvicorn both reload on save.
-
-```
- docker compose --profile dev up --build
-```
-
-- frontend: http://localhost:3000
-- API: http://localhost:8000 (docs at `/docs`)
-
-### Production (static build)
-
-The frontend is compiled and served as static files by nginx; no source
-is mounted.
-
-```
- docker compose --profile prod up --build
+```sh
+make ci-setup
+make check
 ```
 
-- frontend: http://localhost:8080
-- API: http://localhost:8000
+`make check` validates the dependency lock, runs Ruff and executes the CI runner
+and monitoring tests. It needs no API keys and makes no paid API calls.
 
-`VITE_BACKEND_URL` is inlined into the bundle at build time, so deploying
-anywhere other than localhost means updating both the `front` build arg
-and the API's `ALLOWED_ORIGINS` in `docker-compose.yml`.
+For chatbot evaluations, first configure `backend/.env` from
+`backend/.env.sample` with your API keys:
 
-## Dependencies
+| Command | Evaluation |
+| --- | --- |
+| `make eval` | Individual answers |
+| `make eval-conversations` | Conversations with multiple turns |
+| `make eval-conversations-if-changed` | Conversations, skipping the commit if it is already recorded as successfully evaluated |
 
-The backend uses Poetry, and `pyproject.toml` is the single source of
-truth — `poetry.lock` is committed so that an image build installs the
-same versions every time. After changing a dependency, relock and commit
-both files:
+These evaluations use paid APIs. The commands work independently of GitHub;
+GitHub Actions runs the same commands for PRs and scheduled evaluations.
+An optional `pre-push` hook runs the checks without paid evaluations.
 
-```
- cd backend && poetry lock --no-update
-```
+## Documentation
 
-CI runs `poetry check --lock`, so a dependency edit committed without
-relocking fails there rather than silently resolving to different
-versions at build time.
-
-Without Poetry installed locally, the backend image already has it:
-
-```
- docker compose --profile dev run --rm --no-deps \
-   -u "$(id -u):$(id -g)" -e HOME=/tmp -e POETRY_CACHE_DIR=/tmp/poetry-cache \
-   --entrypoint poetry api-dev lock --no-update
-```
-
-The `-u` matters: without it the lock file is written back through the
-bind mount owned by root.
-
-The frontend uses npm, with `package-lock.json` committed and installed
-via `npm ci`.
-
-### Troubleshooting
-
-Frontend dependencies are held in a named volume, so it must be dropped
-when `package.json` changes:
-
-```
- docker volume rm divination_front_node_modules
-```
+- [CI setup, hooks and scheduling](docs/ci.md)
+- [Run the application](docs/running.md)
+- [Evaluation datasets and metrics](backend/tests/evals/README.md)
+- [Monitoring and human curation](backend/MONITORING.md)

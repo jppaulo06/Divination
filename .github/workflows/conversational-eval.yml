@@ -3,8 +3,7 @@ name: Conversational Eval (multi-turn)
 on:
   workflow_dispatch:
   schedule:
-    # Weekly, Monday 06:00 UTC — slower/pricier than the per-PR unit
-    # suite, so it doesn't run on every change (see tests/evals/README.md).
+    # Monday 06:00 UTC; the portable runner skips evaluated commits.
     - cron: "0 6 * * 1"
 
 concurrency:
@@ -15,108 +14,110 @@ permissions:
   contents: read
   actions: read
 
-defaults:
-  run:
-    working-directory: backend
-
 jobs:
-  check-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      should-run: ${{ steps.check.outputs.result }}
-    steps:
-      - name: Check whether this commit has already been evaluated
-        id: check
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Manual runs always allow an explicit re-evaluation.
-            if (context.eventName === 'workflow_dispatch') {
-              return true;
-            }
-
-            const runs = github.paginate.iterator(
-              github.rest.actions.listWorkflowRuns,
-              {
-                ...context.repo,
-                workflow_id: 'conversational-eval.yml',
-                branch: context.ref.replace('refs/heads/', ''),
-                head_sha: context.sha,
-                status: 'success',
-                per_page: 100,
-              },
-            );
-
-            for await (const { data } of runs) {
-              for (const run of data) {
-                if (run.id === context.runId) continue;
-                const jobs = await github.paginate(
-                  github.rest.actions.listJobsForWorkflowRun,
-                  { ...context.repo, run_id: run.id, per_page: 100 },
-                );
-                // A skipped evaluation can also leave a successful workflow.
-                // Only an evaluation job that actually succeeded counts.
-                if (jobs.some(job =>
-                  job.name === 'conversational-evals' &&
-                  job.conclusion === 'success'
-                )) {
-                  core.info('Skipping: this commit was already evaluated successfully.');
-                  return false;
-                }
-              }
-            }
-
-            core.info('No successful evaluation found for this commit; running the suite.');
-            return true;
-
   conversational-evals:
-    needs: check-changes
-    if: needs.check-changes.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # The runner owns the decision; Actions only persists its state.
+      - name: Locate persisted evaluation state
+        id: state
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pages = github.paginate.iterator(
+              github.rest.actions.listArtifactsForRepo,
+              {
+                ...context.repo,
+                name: `conversational-state-v1-${context.sha}`,
+                per_page: 100,
+              },
+            );
+            for await (const { data } of pages) {
+              for (const artifact of data) {
+                if (artifact.expired || artifact.workflow_run?.head_sha !== context.sha) continue;
+                const { data: run } = await github.rest.actions.getWorkflowRun({
+                  ...context.repo,
+                  run_id: artifact.workflow_run.id,
+                });
+                if (run.path !== '.github/workflows/conversational-eval.yml' ||
+                    !['schedule', 'workflow_dispatch'].includes(run.event) ||
+                    run.conclusion !== 'success') continue;
+                core.setOutput('artifact-id', artifact.id);
+                core.setOutput('run-id', run.id);
+                return;
+              }
+            }
+
+      - name: Restore evaluation state
+        if: steps.state.outputs.artifact-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.state.outputs.artifact-id }}
+          run-id: ${{ steps.state.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: .ci-state
+          merge-multiple: true
+
+      - name: Check whether evaluation is needed
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            needed=$(python3 scripts/ci.py conversation-needed)
+            echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.check.outputs.needed == 'true'
         with:
           python-version: "3.10"
 
       - name: Install Poetry
+        if: steps.check.outputs.needed == 'true'
         run: pipx install poetry==1.6.1
 
       - name: Cache Poetry virtualenv
+        if: steps.check.outputs.needed == 'true'
         uses: actions/cache@v4
         with:
           path: backend/.venv
-          key: poetry-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
-
-      - name: Configure Poetry to use in-project venv
-        run: poetry config virtualenvs.in-project true
+          key: poetry-${{ runner.os }}-${{ hashFiles('backend/poetry.lock', 'backend/pyproject.toml') }}
 
       - name: Install dependencies
-        run: poetry install --with dev
+        if: steps.check.outputs.needed == 'true'
+        run: make ci-setup
 
-      - name: Write .env for tests
-        run: |
-          cat <<EOF > .env
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          MARITACA_API_KEY=${{ secrets.MARITACA_API_KEY }}
-          LANGCHAIN_API_KEY=${{ secrets.LANGCHAIN_API_KEY }}
-          HOST=0.0.0.0
-          PORT=8000
-          ALLOWED_ORIGINS=["http://localhost:3000"]
-          ALLOWED_METHODS=["GET","POST"]
-          ALLOWED_HEADERS=["*"]
-          EOF
-
-      # --num-processes must stay at 1: simulate() runs eagerly at
-      # collection time, so extra xdist workers would multiply
-      # concurrent Maritaca calls and blow through its rate limit (see
-      # tests/evals/README.md, "Concurrency is capped for Maritaca's
-      # rate limit").
       - name: Run multi-turn conversational eval suite
-        run: >
-          poetry run deepeval test run tests/evals/test_divination_chat.py
-          --identifier "scheduled-${{ github.run_id }}"
-          --num-processes 1
-          --ignore-errors
-          --skip-on-missing-params
+        if: steps.check.outputs.needed == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CI_RUN_ID: conversations-${{ github.run_id }}-${{ github.run_attempt }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARITACA_API_KEY: ${{ secrets.MARITACA_API_KEY }}
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+          HOST: 0.0.0.0
+          PORT: "8000"
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+          ALLOWED_METHODS: '["GET","POST"]'
+          ALLOWED_HEADERS: '["*"]'
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            make eval-conversations
+          else
+            make eval-conversations-if-changed
+          fi
+
+      # Renew the retained state even when the expensive suite was skipped.
+      - name: Persist successful evaluation state
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversational-state-v1-${{ github.sha }}
+          path: .ci-state/conversations.json
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
