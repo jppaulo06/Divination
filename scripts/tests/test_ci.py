@@ -41,6 +41,10 @@ class RunnerTests(unittest.TestCase):
             "        self.assertEqual(1 + 1, 2)\n"
         )
         shutil.copy(ROOT / "scripts/ci.py", self.repo / "scripts/ci.py")
+        shutil.copy(
+            ROOT / "scripts/eval_policy.py",
+            self.repo / "scripts/eval_policy.py",
+        )
         shutil.copy(ROOT / ".githooks/pre-push", self.repo / "pre-push")
         (self.repo / ".gitignore").write_text(".ci-state/\n")
         (self.repo / "backend/source.txt").write_text("initial\n")
@@ -60,11 +64,28 @@ class RunnerTests(unittest.TestCase):
             "'venv': os.environ.get('POETRY_VIRTUALENVS_IN_PROJECT')}) + '\\n')\n"
             "if os.environ.get('MUTATE_CHECKOUT'):\n"
             "    pathlib.Path('source.txt').write_text('changed during eval')\n"
+            "results_dir = os.environ.get('EVAL_RESULTS_DIR')\n"
+            "payload = os.environ.get('EVAL_FAKE_RESULTS')\n"
+            "if results_dir and payload:\n"
+            "    out = pathlib.Path(results_dir)\n"
+            "    out.mkdir(parents=True, exist_ok=True)\n"
+            "    for case in json.loads(payload):\n"
+            "        (out / f\"{case['name']}.json\").write_text(\n"
+            "            json.dumps(case) + '\\n'\n"
+            "        )\n"
             "sys.exit(int(os.environ.get('POETRY_EXIT', '0')))\n"
         )
         executable.chmod(0o755)
         self.env = dict(self.git_env)
-        for name in ("CI_STATE_DIR", "CI_RUN_ID", "POETRY_EXIT", "MUTATE_CHECKOUT"):
+        for name in (
+            "CI_STATE_DIR",
+            "CI_RUN_ID",
+            "CI_BASELINE_PATH",
+            "CI_POLICY_PATH",
+            "POETRY_EXIT",
+            "MUTATE_CHECKOUT",
+            "EVAL_FAKE_RESULTS",
+        ):
             self.env.pop(name, None)
         self.env.update(
             PATH=f"{self.directory}{os.pathsep}{os.environ['PATH']}",
@@ -83,9 +104,9 @@ class RunnerTests(unittest.TestCase):
         self.git("add", ".")
         self.git("-c", "commit.gpgsign=false", "commit", "-qm", "test")
 
-    def run_ci(self, command, *, expected=0, input_text=None):
+    def run_ci(self, *command_args, expected=0, input_text=None):
         result = subprocess.run(
-            [sys.executable, str(self.repo / "scripts/ci.py"), command],
+            [sys.executable, str(self.repo / "scripts/ci.py"), *command_args],
             # Commands must work even when invoked outside the repository.
             cwd=self.directory,
             env=self.env,
@@ -93,7 +114,9 @@ class RunnerTests(unittest.TestCase):
             input=input_text,
             capture_output=True,
         )
-        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        self.assertEqual(
+            result.returncode, expected, result.stdout + result.stderr
+        )
         return result.stdout
 
     def calls(self):
@@ -190,8 +213,12 @@ class RunnerTests(unittest.TestCase):
     def test_check_passes_without_paid_calls(self):
         self.run_ci("check")
         calls = [call["args"] for call in self.calls()]
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[-1], ["run", "pytest", "tests/monitoring", "-q"])
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[-2], ["run", "pytest", "tests/monitoring", "-q"])
+        self.assertEqual(
+            calls[-1],
+            ["run", "pytest", "tests/evals/test_result_recorder.py", "-q"],
+        )
         self.assertFalse(any("deepeval" in args for args in calls))
 
     def test_pre_push_skips_deletions(self):
@@ -234,6 +261,176 @@ class RunnerTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertEqual(len(self.calls()), 1)
+
+    def _write_dataset(self, names):
+        evals_dir = self.repo / "backend/tests/evals"
+        evals_dir.mkdir(parents=True, exist_ok=True)
+        (evals_dir / ".dataset.json").write_text(
+            json.dumps([{"name": name} for name in names]) + "\n"
+        )
+
+    def _write_policy(self, policy):
+        evals_dir = self.repo / "backend/tests/evals"
+        evals_dir.mkdir(parents=True, exist_ok=True)
+        (evals_dir / "policy.json").write_text(json.dumps(policy) + "\n")
+
+    def _case_payload(self, name, status, score, *, success=True, error=None):
+        return {
+            "name": name,
+            "status": status,
+            "error": error,
+            "metrics": [
+                {
+                    "name": "Rules Correctness",
+                    "score": score,
+                    "threshold": 0.5,
+                    "success": success,
+                    "status": (
+                        "error"
+                        if error
+                        else (
+                            "incomplete"
+                            if success is None
+                            else ("passed" if success else "failed")
+                        )
+                    ),
+                    "error": error,
+                }
+            ],
+        }
+
+    def test_baseline_comparison_blocks_potential_regression(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [
+                self._case_payload("fireball", "passed", 0.9),
+                self._case_payload("shield", "passed", 0.85),
+            ]
+        )
+        self.run_ci("eval")
+        self.run_ci("record-baseline")
+
+        self.env["POETRY_EXIT"] = "1"
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [
+                self._case_payload("fireball", "passed", 0.9),
+                self._case_payload(
+                    "shield", "failed", 0.3, success=False
+                ),
+            ]
+        )
+        output = self.run_ci("eval", expected=1)
+        self.assertIn("Evaluation delivery policy: BLOCK", output)
+        self.assertIn("potential_regression=1", output)
+        # Blocked runs cannot become the baseline unless explicitly forced.
+        self.run_ci("record-baseline", expected=1)
+        self.run_ci("record-baseline", "--force", expected=0)
+
+    def test_non_blocking_known_limitation_allows_delivery(self):
+        self._write_dataset(["fireball", "known-gap"])
+        self._write_policy(
+            {
+                "known_limitations": {
+                    "known-gap": {
+                        "blocking": False,
+                        "reason": "Tracked PDF chunking limit",
+                    }
+                }
+            }
+        )
+        self.commit()
+        self.env["POETRY_EXIT"] = "1"
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [
+                self._case_payload("fireball", "passed", 0.95),
+                self._case_payload(
+                    "known-gap", "failed", 0.35, success=False
+                ),
+            ]
+        )
+        output = self.run_ci("eval", expected=0)
+        self.assertIn("Evaluation delivery policy: ALLOW", output)
+        self.assertIn("Tracked PDF chunking limit", output)
+
+        self.run_ci("record-baseline")
+        # Repeating with a similar score still passes; a sharp drop blocks.
+        output = self.run_ci("eval", expected=0)
+        self.assertIn("continuing_limitation=1", output)
+
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [
+                self._case_payload("fireball", "passed", 0.95),
+                self._case_payload(
+                    "known-gap", "failed", 0.1, success=False
+                ),
+            ]
+        )
+        output = self.run_ci("eval", expected=1)
+        self.assertIn("continuing_limitation_worsened", output)
+
+    def test_record_baseline_rejects_uncommitted_run_unless_forced(self):
+        self._write_dataset(["fireball"])
+        # Intentionally leave dataset uncommitted so clean_commit() is None.
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [self._case_payload("fireball", "passed", 0.9)]
+        )
+        self.run_ci("eval")
+        self.run_ci("record-baseline", expected=1)
+        self.run_ci("record-baseline", "--force", expected=0)
+
+    def test_invalid_policy_fails_before_paid_eval_calls(self):
+        self._write_dataset(["fireball"])
+        self._write_policy({"unknown_key": True})
+        self.run_ci("eval", expected=1)
+        self.assertEqual(self.calls(), [])
+
+    def test_incomplete_assessment_blocks_even_when_deepeval_exits_zero(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["POETRY_EXIT"] = "0"
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [
+                self._case_payload("fireball", "passed", 0.9),
+                # shield omitted (simulates skipped/errored metric under
+                # --ignore-errors / --skip-on-missing-params).
+            ]
+        )
+        output = self.run_ci("eval", expected=1)
+        self.assertIn("incomplete_assessment=1", output)
+        self.run_ci("record-baseline", expected=1)
+
+    def test_eval_compare_runs_offline_against_saved_reports(self):
+        self._write_dataset(["fireball"])
+        self.commit()
+        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
+            [self._case_payload("fireball", "passed", 0.9)]
+        )
+        self.run_ci("eval")
+        self.run_ci("record-baseline")
+
+        candidate_file = self.directory / "candidate.json"
+        candidate_file.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "suite": "single-turn",
+                    "run_id": "offline-1",
+                    "commit": "deadbeef",
+                    "cases": {
+                        "fireball": self._case_payload(
+                            "fireball", "failed", 0.2, success=False
+                        )
+                    },
+                }
+            )
+        )
+        calls_before = len(self.calls())
+        output = self.run_ci(
+            "eval-compare", "--candidate", str(candidate_file), expected=1
+        )
+        self.assertIn("potential_regression=1", output)
+        self.assertEqual(len(self.calls()), calls_before)
 
 
 if __name__ == "__main__":

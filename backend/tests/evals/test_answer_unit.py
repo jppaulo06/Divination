@@ -15,6 +15,7 @@ import pytest
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase
 
+from result_recorder import record_execution_error, run_and_record
 from single_turn_metrics import NOT_COVERED_METRICS, SINGLE_TURN_METRICS
 
 chatbot_app = import_module("chatbot_app")
@@ -27,12 +28,17 @@ with open("tests/evals/.dataset.json") as f:
     "golden", _GOLDENS, ids=[g["name"] for g in _GOLDENS]
 )
 def test_single_turn_answer(golden):
+    case_name = golden["name"]
     question = golden["turns"][0]["content"]
-    answer, retrieved_docs = (
-        chatbot_app._chat_service.get_answer_with_context(
-            query=question, chat_id=f"unit-{golden['name']}"
+    try:
+        answer, retrieved_docs = (
+            chatbot_app._chat_service.get_answer_with_context(
+                query=question, chat_id=f"unit-{case_name}"
+            )
         )
-    )
+    except Exception as error:
+        record_execution_error(case_name, error)
+        raise
 
     test_case = LLMTestCase(
         input=question,
@@ -43,7 +49,12 @@ def test_single_turn_answer(golden):
 
     metrics = (
         NOT_COVERED_METRICS
-        if "not-covered" in golden["name"]
+        if "not-covered" in case_name
         else SINGLE_TURN_METRICS
     )
-    assert_test(test_case=test_case, metrics=metrics)
+    run_and_record(
+        case_name=case_name,
+        test_case=test_case,
+        metrics=metrics,
+        assert_fn=assert_test,
+    )

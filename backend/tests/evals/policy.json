@@ -1,0 +1,7 @@
+{
+  "block_on_regression": true,
+  "block_on_incomplete": true,
+  "block_on_new_case_failure": true,
+  "max_limitation_score_drop": 0.1,
+  "known_limitations": {}
+}

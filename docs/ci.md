@@ -38,10 +38,13 @@ images do not contain the dev dependencies required by these commands.
 | `make check` | `python3 scripts/ci.py check` | Lock validation, Ruff, CI runner tests and monitoring tests | No |
 | `make lint` | `python3 scripts/ci.py lint` | Lock validation and Ruff | No |
 | `make monitoring` | `python3 scripts/ci.py monitoring` | Monitoring tests with pytest | No |
+| `make eval-recorder-tests` | `python3 scripts/ci.py eval-recorder-tests` | Offline DeepEval `result_recorder` tests with a fixed metric | No |
 | `make runner-tests` | `python3 scripts/ci.py runner-tests` | Test CI decisions in temporary Git repositories | No |
-| `make eval` | `python3 scripts/ci.py eval` | Single-turn chatbot evaluations | Yes |
-| `make eval-conversations` | `python3 scripts/ci.py eval-conversations` | Always run multi-turn evaluations | Yes |
+| `make eval` | `python3 scripts/ci.py eval` | Single-turn chatbot evaluations with baseline comparison and delivery policy | Yes |
+| `make eval-conversations` | `python3 scripts/ci.py eval-conversations` | Always run multi-turn evaluations with baseline comparison and delivery policy | Yes |
 | `make eval-conversations-if-changed` | `python3 scripts/ci.py scheduled-conversations` | Multi-turn evaluations unless this commit is already recorded as successful | Only when needed |
+| `make eval-record-baseline` | `python3 scripts/ci.py record-baseline` | Record a complete saved evaluation report as the reference baseline | No |
+| `make eval-compare` | `python3 scripts/ci.py eval-compare` | Compare saved candidate and baseline reports under the delivery policy | No |
 
 The Python entry point also works when called by absolute path from another
 directory. Each command exits with a nonzero status when a subprocess fails,
@@ -70,10 +73,34 @@ CI provider can inject them through its own secret mechanism:
 
 No API credentials are needed for `make check`. `make eval` uses three
 workers; conversational evaluations use one to limit Maritaca traffic.
-Both retain the existing DeepEval options `--ignore-errors` and
-`--skip-on-missing-params`: a successful command reflects that policy and
-does not guarantee that every metric was evaluated. See the
-[evaluation guide](../backend/tests/evals/README.md) for datasets and metrics.
+Both invoke DeepEval with `--ignore-errors` and `--skip-on-missing-params`
+so that a single failing or errored case does not abort the rest of the suite.
+During runner-managed runs, `result_recorder.py` runs `assert_test`
+synchronously (`run_async=False`) so per-case metric outcomes are captured into
+`.ci-state/latest-<suite>.json`, and `scripts/eval_policy.py` compares them
+against `.ci-state/baseline-<suite>.json` (when present) using the delivery
+policy in `backend/tests/evals/policy.json`. Any missing, errored or skipped
+metric is classified as `incomplete_assessment` and blocks the command by
+default (`block_on_incomplete: true`), rather than passing silently. Conversely,
+when DeepEval exits `1` solely because declared non-blocking known limitations
+failed without worsening or regressing other metrics, `scripts/ci.py` exits `0`
+so CI stays green while reporting those limitations visibly.
+
+To establish or update the reference baseline after an accepted complete run on
+a clean commit, run `make eval-record-baseline` (or
+`python3 scripts/ci.py record-baseline --suite conversational` for the
+multi-turn suite). `record-baseline` refuses incomplete reports, uncommitted
+runs, and `BLOCK` decisions unless `--force` is passed. To compare two saved
+reports offline without API calls, run
+`python3 scripts/ci.py eval-compare --baseline <baseline.json> --candidate <candidate.json>`.
+Set `CI_BASELINE_PATH` or `CI_POLICY_PATH` to point to alternate baseline or
+policy files. Note that `.ci-state/` is local and gitignored, and the default
+GitHub Actions PR workflow (`ci.yml`) does not persist a baseline across PR
+runs; baseline comparison runs automatically wherever `.ci-state/` persists (a
+developer machine or persistent runner) or when a CI adapter supplies a saved
+baseline via `.ci-state/` or `CI_BASELINE_PATH`. See the
+[evaluation guide](../backend/tests/evals/README.md) for datasets, metrics
+and known-limitation configuration.
 
 Run identifiers default to the short Git commit plus a UTC timestamp.
 Set `CI_RUN_ID` to supply an identifier from another CI system.

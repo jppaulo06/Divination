@@ -58,10 +58,13 @@ jobs:
       - name: Install dependencies
         run: make ci-setup
 
-      # Offline and deterministic: detectors are pure functions and the
-      # store tests use in-memory SQLite, so no API keys are needed.
+      # Offline and deterministic: detectors are pure functions, store tests
+      # use in-memory SQLite, and the recorder test uses a fixed BaseMetric.
       - name: Run monitoring tests
         run: make monitoring
+
+      - name: Run eval recorder tests
+        run: make eval-recorder-tests
 
   unit-evals:
     needs: lint

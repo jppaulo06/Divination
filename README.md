@@ -13,14 +13,16 @@ This fork adds testing, monitoring and curation to explore the CD4AI cycle.
 
 | Stage | What this project does |
 | --- | --- |
-| **Testing** | Runs code checks and chatbot evaluations to detect regressions. Approval follows the criteria of each test. |
+| **Testing** | Runs code checks and chatbot evaluations, compares case outcomes against a saved reference baseline, and enforces the delivery policy in [`backend/tests/evals/policy.json`](backend/tests/evals/policy.json). |
 | **Monitoring** | Records interactions and user feedback, and flags possible failures with lightweight detectors. |
 | **Curation** | Supports human review to distinguish real defects from noise. Developers manually turn confirmed defects into new regression cases. |
 
 To close the cycle, a developer defines the expected behavior for a confirmed
 problem, adds a case to the [evaluation dataset](backend/tests/evals/.dataset.json)
-and runs the evaluations alongside the fix. That case becomes part of future
-regression runs. See the [manual curation guide](backend/tests/evals/README.md#adding-a-regression-case-manually).
+and runs the evaluations alongside the fix (or records it as a known limitation
+in [`backend/tests/evals/policy.json`](backend/tests/evals/policy.json) while a
+fix is pending). That case becomes part of future regression runs. See the
+[manual curation guide](backend/tests/evals/README.md#adding-a-regression-case-manually).
 
 ## Try the checks
 
@@ -40,9 +42,11 @@ For chatbot evaluations, first configure `backend/.env` from
 
 | Command | Evaluation |
 | --- | --- |
-| `make eval` | Individual answers |
-| `make eval-conversations` | Conversations with multiple turns |
+| `make eval` | Individual answers, compared against the saved reference baseline |
+| `make eval-conversations` | Conversations with multiple turns, compared against the saved reference baseline |
 | `make eval-conversations-if-changed` | Conversations, skipping the commit if it is already recorded as successfully evaluated |
+| `make eval-record-baseline` | Promote the latest complete evaluation report in `.ci-state/` to the reference baseline (no API calls) |
+| `make eval-compare` | Compare the latest saved report against the reference baseline offline (no API calls) |
 
 These evaluations use paid APIs. The commands work independently of GitHub;
 GitHub Actions runs the same commands for PRs and scheduled evaluations.

@@ -195,11 +195,34 @@ Turning a confirmed defect into a test is a manual step in this project:
 3. From the repository root, run `make eval` to check whether the case exposes
    the defect, then run it again with the fix. Use `make eval-conversations`
    when follow-up interactions matter. Both commands use paid APIs.
-4. Commit the case with the fix. Both evaluation suites read this dataset,
-   so the case will participate in subsequent regression runs.
+4. Commit the case with the fix, or—if the defect is retained before a fix is
+   ready—declare the case under `known_limitations` in
+   `tests/evals/policy.json` (setting `"blocking": false` to report it
+   visibly without blocking unrelated changes, or `"blocking": true` to keep
+   CI red until resolved). Both evaluation suites read `.dataset.json`, so the
+   case will participate in subsequent regression runs.
+5. After an accepted complete run on the reference version, run
+   `make eval-record-baseline` (or
+   `python3 scripts/ci.py record-baseline --suite conversational`) to update
+   `.ci-state/baseline-<suite>.json` for future comparisons.
 
-Review and case creation remain human decisions. Approval uses each test's
-criteria; this implementation does not require an aggregate success-rate rule.
+## Reference comparison and delivery policy (`policy.json`)
+
+When evaluations run through `scripts/ci.py` (`make eval`,
+`make eval-conversations`, or `make eval-conversations-if-changed`),
+`result_recorder.py` captures per-case metric verdicts and `scripts/eval_policy.py`
+compares them case by case against the stored reference baseline:
+
+- `still_passing`: passed in both baseline and candidate.
+- `potential_regression`: passed in baseline and failed in candidate (blocks by default).
+- `improvement_observed`: failed in baseline and passed in candidate (allowed; reminds the team to re-record the baseline with `record-baseline` once accepted and remove any resolved `known_limitations` entry).
+- `continuing_limitation`: failed in both versions (allowed only when declared with `"blocking": false` in `policy.json`, no previously passing metric on that case newly failed, and no matched metric score dropped by more than `max_limitation_score_drop`).
+- `new_case`: absent from the baseline (or run without a baseline); checked against its own criteria and `known_limitations`.
+- `incomplete_assessment`: missing case or errored/skipped metric under `--ignore-errors` / `--skip-on-missing-params` (blocks by default instead of passing silently).
+
+Review and case creation remain human decisions. Delivery decisions follow
+`tests/evals/policy.json` on a case-by-case basis rather than an aggregate
+success-rate threshold.
 
 ## Notes
 
