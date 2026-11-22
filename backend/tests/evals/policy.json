@@ -1,7 +1,6 @@
 {
-  "block_on_regression": true,
-  "block_on_incomplete": true,
-  "block_on_new_case_failure": true,
-  "max_limitation_score_drop": 0.1,
-  "known_limitations": {}
+  "baseline_attempts": 20,
+  "confirmation_attempts": 5,
+  "regression_below": 0.01,
+  "change_below": 0.05
 }

@@ -9,19 +9,21 @@ cheaper/faster signal than the full conversational suite.
 
 import json
 from importlib import import_module
+import uuid
 
 import pytest
 
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase
 
-from result_recorder import record_execution_error, run_and_record
+from result_recorder import record_execution_error, run_and_record, select_cases
 from single_turn_metrics import NOT_COVERED_METRICS, SINGLE_TURN_METRICS
 
 chatbot_app = import_module("chatbot_app")
 
 with open("tests/evals/.dataset.json") as f:
-    _GOLDENS = json.load(f)
+    # EVAL_CASES limits a run to some cases (baseline rebuilds, confirmations).
+    _GOLDENS = select_cases(json.load(f))
 
 
 @pytest.mark.parametrize(
@@ -33,7 +35,10 @@ def test_single_turn_answer(golden):
     try:
         answer, retrieved_docs = (
             chatbot_app._chat_service.get_answer_with_context(
-                query=question, chat_id=f"unit-{case_name}"
+                # A fresh chat per attempt: repeated attempts must not see
+                # each other's questions and answers as history.
+                query=question,
+                chat_id=f"unit-{case_name}-{uuid.uuid4().hex[:12]}",
             )
         )
     except Exception as error:

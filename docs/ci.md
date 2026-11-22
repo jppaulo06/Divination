@@ -40,11 +40,11 @@ images do not contain the dev dependencies required by these commands.
 | `make monitoring` | `python3 scripts/ci.py monitoring` | Monitoring tests with pytest | No |
 | `make eval-recorder-tests` | `python3 scripts/ci.py eval-recorder-tests` | Offline DeepEval `result_recorder` tests with a fixed metric | No |
 | `make runner-tests` | `python3 scripts/ci.py runner-tests` | Test CI decisions in temporary Git repositories | No |
-| `make eval` | `python3 scripts/ci.py eval` | Single-turn chatbot evaluations with baseline comparison and delivery policy | Yes |
-| `make eval-conversations` | `python3 scripts/ci.py eval-conversations` | Always run multi-turn evaluations with baseline comparison and delivery policy | Yes |
+| `make eval` | `python3 scripts/ci.py eval` | Run every single-turn case once and show which pass and fail; never blocks | Yes |
+| `make eval-ci` | `python3 scripts/ci.py eval-ci` | Compare single-turn cases with the committed reference (Fisher's exact test, extra attempts for failed cases that usually pass); block on regressions or missing evidence | Yes |
+| `make eval-baseline [CASE=<name>]` | `python3 scripts/ci.py eval-baseline [--case <name>]` | Rebuild the committed reference (all cases, or one) and report failing, worse and improved cases | Yes |
+| `make eval-conversations` | `python3 scripts/ci.py eval-conversations` | Always run multi-turn evaluations, reported against their own criteria | Yes |
 | `make eval-conversations-if-changed` | `python3 scripts/ci.py scheduled-conversations` | Multi-turn evaluations unless this commit is already recorded as successful | Only when needed |
-| `make eval-record-baseline` | `python3 scripts/ci.py record-baseline` | Record a complete saved evaluation report as the reference baseline | No |
-| `make eval-compare` | `python3 scripts/ci.py eval-compare` | Compare saved candidate and baseline reports under the delivery policy | No |
 
 The Python entry point also works when called by absolute path from another
 directory. Each command exits with a nonzero status when a subprocess fails,
@@ -71,36 +71,42 @@ CI provider can inject them through its own secret mechanism:
   application settings required by the evaluation harness. Use the JSON
   list syntax shown in `backend/.env.sample` for the `ALLOWED_*` values.
 
-No API credentials are needed for `make check`. `make eval` uses three
-workers; conversational evaluations use one to limit Maritaca traffic.
-Both invoke DeepEval with `--ignore-errors` and `--skip-on-missing-params`
-so that a single failing or errored case does not abort the rest of the suite.
-During runner-managed runs, `result_recorder.py` runs `assert_test`
-synchronously (`run_async=False`) so per-case metric outcomes are captured into
-`.ci-state/latest-<suite>.json`, and `scripts/eval_policy.py` compares them
-against `.ci-state/baseline-<suite>.json` (when present) using the delivery
-policy in `backend/tests/evals/policy.json`. Any missing, errored or skipped
-metric is classified as `incomplete_assessment` and blocks the command by
-default (`block_on_incomplete: true`), rather than passing silently. Conversely,
-when DeepEval exits `1` solely because declared non-blocking known limitations
-failed without worsening or regressing other metrics, `scripts/ci.py` exits `0`
-so CI stays green while reporting those limitations visibly.
+No API credentials are needed for `make check`. The single-turn commands use
+two workers by default, which stays within Maritaca's output-token rate limit
+(three workers exceeded it); set `EVAL_WORKERS=1` if requests are rejected
+with HTTP 429, or raise it if your account allows more. Conversational
+evaluations always use one worker.
 
-To establish or update the reference baseline after an accepted complete run on
-a clean commit, run `make eval-record-baseline` (or
-`python3 scripts/ci.py record-baseline --suite conversational` for the
-multi-turn suite). `record-baseline` refuses incomplete reports, uncommitted
-runs, and `BLOCK` decisions unless `--force` is passed. To compare two saved
-reports offline without API calls, run
-`python3 scripts/ci.py eval-compare --baseline <baseline.json> --candidate <candidate.json>`.
-Set `CI_BASELINE_PATH` or `CI_POLICY_PATH` to point to alternate baseline or
-policy files. Note that `.ci-state/` is local and gitignored, and the default
-GitHub Actions PR workflow (`ci.yml`) does not persist a baseline across PR
-runs; baseline comparison runs automatically wherever `.ci-state/` persists (a
-developer machine or persistent runner) or when a CI adapter supplies a saved
-baseline via `.ci-state/` or `CI_BASELINE_PATH`. See the
-[evaluation guide](../backend/tests/evals/README.md) for datasets, metrics
-and known-limitation configuration.
+During a run, the terminal shows only progress. DeepEval's full output goes
+to `deepeval.log` in each round's folder under `.ci-state/runs/<run>/round-<n>/`
+(the first run, then any confirmation or retry rounds); afterwards
+the runner prints a compact table of every case and metric, the judge's
+reason for each failed metric, the delivery decision and the next steps. Set
+`EVAL_VERBOSE=1` to stream DeepEval's own output instead.
+DeepEval runs with `--ignore-errors` and `--skip-on-missing-params` so that
+one failing or errored attempt does not abort the rest. `result_recorder.py`
+runs `assert_test` synchronously (`run_async=False`) and writes one file per
+attempt, so repeated attempts (`--repeat`) are all kept. An attempt without a
+verdict counts as missing evidence and blocks `make eval-ci`, rather than
+passing silently.
+
+`make eval-ci` compares each case with its entry in the committed reference,
+`backend/tests/evals/baselines/single-turn.json`, under the thresholds in
+`backend/tests/evals/policy.json`; the
+[evaluation guide](../backend/tests/evals/README.md#reference-comparison-and-delivery-policy)
+explains the test. Because the reference is a versioned file, every checkout
+and every CI provider uses the same one, and GitHub pull requests need no
+extra state. A failing case alone does not fail the command; only a confirmed
+regression, an attempt without a verdict, or a case without a reference does.
+
+`make eval-baseline` runs 25 cases x 20 attempts (roughly 1.5 hours with two
+workers), so rebuild everything only occasionally and use
+`make eval-baseline CASE=<name>` for new, edited or fixed cases (edited cases
+are not detected automatically). Attempts without a verdict are rerun up to
+three times. Review its
+report (failing, worse, improved and new cases) and commit the baseline file.
+Set `CI_POLICY_PATH` to use an alternate policy file. The latest report and
+decision are also saved under `.ci-state/` for inspection.
 
 Run identifiers default to the short Git commit plus a UTC timestamp.
 Set `CI_RUN_ID` to supply an identifier from another CI system.
@@ -116,7 +122,10 @@ git config --local core.hooksPath .githooks
 If this clone already uses a custom hooks directory, integrate
 [`.githooks/pre-push`](../.githooks/pre-push) with the existing hook instead of
 replacing its configuration. The hook runs `make check`'s Python equivalent
-before a push and blocks the push when it fails. It never runs paid
+before every push and blocks the push when it fails. When the push updates
+`main`, the integration branch, it then also runs `make eval-ci` and blocks
+the push on a confirmed regression or missing evidence; this makes paid API
+calls and takes a few minutes. Pushes to other branches never run paid
 evaluations. Python and Poetry must be on the Git process's `PATH`,
 including when pushing from an IDE.
 

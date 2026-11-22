@@ -195,34 +195,65 @@ Turning a confirmed defect into a test is a manual step in this project:
 3. From the repository root, run `make eval` to check whether the case exposes
    the defect, then run it again with the fix. Use `make eval-conversations`
    when follow-up interactions matter. Both commands use paid APIs.
-4. Commit the case with the fix, or—if the defect is retained before a fix is
-   ready—declare the case under `known_limitations` in
-   `tests/evals/policy.json` (setting `"blocking": false` to report it
-   visibly without blocking unrelated changes, or `"blocking": true` to keep
-   CI red until resolved). Both evaluation suites read `.dataset.json`, so the
-   case will participate in subsequent regression runs.
-5. After an accepted complete run on the reference version, run
-   `make eval-record-baseline` (or
-   `python3 scripts/ci.py record-baseline --suite conversational`) to update
-   `.ci-state/baseline-<suite>.json` for future comparisons.
+4. Record the case's reference with `make eval-baseline CASE=<name>` (20
+   attempts, about 4 minutes with two workers) and commit the dataset, the fix
+   and `tests/evals/baselines/single-turn.json` together. If the fix is not
+   ready, the reference records the case's current failure rate as accepted
+   behavior: it is listed in every report under "Fails in the reference" and
+   does not block unrelated changes; a collapse can still be caught (see
+   below). Rebuild the case's reference again once it is fixed. CI blocks a
+   case without a reference, so a new case cannot be forgotten. An *edited*
+   case keeps its old reference, because the reference is keyed by name only:
+   after changing a case's question, expected outcome or metrics, rebuild its
+   reference yourself.
 
-## Reference comparison and delivery policy (`policy.json`)
+## Reference comparison and delivery policy
 
-When evaluations run through `scripts/ci.py` (`make eval`,
-`make eval-conversations`, or `make eval-conversations-if-changed`),
-`result_recorder.py` captures per-case metric verdicts and `scripts/eval_policy.py`
-compares them case by case against the stored reference baseline:
+The reference (`tests/evals/baselines/single-turn.json`) stores, for each case,
+how many of its attempts passed when the accepted version was evaluated (20 by
+default). An attempt passes only if every metric meets its threshold. A
+developer rebuilds it by hand and commits it, so accepting new behavior is
+always a reviewed change:
 
-- `still_passing`: passed in both baseline and candidate.
-- `potential_regression`: passed in baseline and failed in candidate (blocks by default).
-- `improvement_observed`: failed in baseline and passed in candidate (allowed; reminds the team to re-record the baseline with `record-baseline` once accepted and remove any resolved `known_limitations` entry).
-- `continuing_limitation`: failed in both versions (allowed only when declared with `"blocking": false` in `policy.json`, no previously passing metric on that case newly failed, and no matched metric score dropped by more than `max_limitation_score_drop`).
-- `new_case`: absent from the baseline (or run without a baseline); checked against its own criteria and `known_limitations`.
-- `incomplete_assessment`: missing case or errored/skipped metric under `--ignore-errors` / `--skip-on-missing-params` (blocks by default instead of passing silently).
+- `make eval-baseline` rebuilds every case and reports cases that fail in the
+  new baseline, cases that got significantly worse or better than the previous
+  one (one-sided Fisher's exact test below `change_below`, 0.05), and new
+  cases. Attempts without a verdict (usually rate limits) are rerun, up to
+  three extra rounds; a case still short of 20 complete attempts is not
+  recorded and keeps its previous entry.
+- `make eval-baseline CASE=<name>` rebuilds one case and keeps the others.
 
-Review and case creation remain human decisions. Delivery decisions follow
-`tests/evals/policy.json` on a case-by-case basis rather than an aggregate
-success-rate threshold.
+`make eval-ci` (what GitHub runs on pull requests) runs each case once. A case
+whose attempt fails becomes a suspect and runs `confirmation_attempts` (5) more
+times, unless even six failures out of six would be ordinary for its reference
+(a case that rarely passes cannot be shown to have declined with so few
+attempts, so confirming it would only spend API calls). The pooled attempts are
+compared with the reference using a one-sided Fisher's exact test: "if this
+case's pass rate had not changed, how likely would this many failures be?"
+Below `regression_below` (0.01, in `tests/evals/policy.json`) the case is a
+confirmed regression.
+
+With 20 reference attempts, that threshold falsely blocks a case at most about
+0.3% of the time (roughly one false block per 40 pull requests for this
+suite), and a case that stops passing is always caught. Moderate declines
+(for example, from 95% to 50%) are caught only in about one pull request in
+four: six attempts carry little evidence. They are caught more reliably when
+the reference is rebuilt, which compares 20 attempts with 20.
+
+CI blocks only on a confirmed regression or on missing evidence: an attempt
+without a verdict (an error or rate limit under `--ignore-errors` /
+`--skip-on-missing-params`), or a case without a reference. A case that fails
+as often as its reference says is accepted behavior and is only reported.
+Because the reference never moves on its own, a slow decline accumulates
+against it until a pull request or a rebuild detects it; a rebuild that would
+accept a significant decline says so before you commit it. Without any
+committed reference, `make eval-ci` stops before making API calls.
+
+`make eval` runs each case once and only shows the results; it compares
+nothing and never blocks. The conversational suite has no reference: its
+conversations are simulated once per run, so repeating the assessment would
+not give independent attempts. It reports failures against each case's own
+criteria and blocks only on missing evidence.
 
 ## Notes
 

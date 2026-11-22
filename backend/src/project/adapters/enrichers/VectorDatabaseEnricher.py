@@ -13,8 +13,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 
 
+DEFAULT_PERSIST_DIRECTORY = "../database/chroma_db"
+
+
 class VectorDatabaseEnricher(ContextEnricher):
-    def __init__(self, k: int = DEFAULT_K):
+    def __init__(
+        self,
+        k: int = DEFAULT_K,
+        persist_directory: str = DEFAULT_PERSIST_DIRECTORY,
+    ):
         filepath = "src/project/database/texts/freerules-dnd.pdf"
         loader = PyPDFLoader(filepath)
         documento = loader.load()
@@ -31,8 +38,9 @@ class VectorDatabaseEnricher(ContextEnricher):
         # collection must be cleared first - otherwise every restart (or
         # any new process constructing this class) re-adds all chunks with
         # fresh random IDs, and the collection grows with duplicates,
-        # degrading retrieval quality.
-        persist_directory = "../database/chroma_db"
+        # degrading retrieval quality. Processes that run at the same time
+        # (evaluation workers, a dev server) must use different directories,
+        # or one deletes the collection another is building.
         shutil.rmtree(persist_directory, ignore_errors=True)
 
         self.vectorstore = Chroma.from_documents(

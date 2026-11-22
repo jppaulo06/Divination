@@ -6,6 +6,10 @@ production. Run from the backend/ directory so relative paths (PDF,
 prompt templates) resolve the same way they do for the app itself.
 """
 
+import atexit
+import shutil
+import tempfile
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,8 +26,15 @@ from project.adapters.enrichers.VectorDatabaseEnricher import (
 )
 from project.core.ChatService import ChatService
 
+# Each evaluation process (one per DeepEval worker) builds its own vector
+# store in a private directory: sharing the app's directory would let one
+# process delete the collection another is still building, and would wipe a
+# running dev server's store.
+_vector_directory = tempfile.mkdtemp(prefix="divination-eval-chroma-")
+atexit.register(shutil.rmtree, _vector_directory, ignore_errors=True)
+
 _chat_service = ChatService(
-    context_enricher=VectorDatabaseEnricher(),
+    context_enricher=VectorDatabaseEnricher(persist_directory=_vector_directory),
     answerer=MaritacaLLM(),
     template=AnswerEnricher(),
     chat_repository=ChatRepository(),

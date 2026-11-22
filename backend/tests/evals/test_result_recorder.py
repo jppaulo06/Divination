@@ -60,7 +60,8 @@ def test_real_assert_test_records_passing_metric(tmp_path, monkeypatch):
         assert_fn=assert_test,
     )
 
-    saved = json.loads((tmp_path / "fireball-pass.json").read_text())
+    (saved_file,) = tmp_path.glob("fireball-pass.*.json")
+    saved = json.loads(saved_file.read_text())
     assert saved["status"] == "passed"
     assert saved["metrics"][0]["score"] == 0.9
     assert saved["metrics"][0]["success"] is True
@@ -79,7 +80,8 @@ def test_real_assert_test_records_failing_metric(tmp_path, monkeypatch):
             assert_fn=assert_test,
         )
 
-    saved = json.loads((tmp_path / "fireball-fail.json").read_text())
+    (saved_file,) = tmp_path.glob("fireball-fail.*.json")
+    saved = json.loads(saved_file.read_text())
     assert saved["status"] == "failed"
     assert saved["metrics"][0]["score"] == 0.2
     assert saved["metrics"][0]["success"] is False

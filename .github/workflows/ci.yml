@@ -88,8 +88,8 @@ jobs:
       - name: Install dependencies
         run: make ci-setup
 
-      - name: Run single-turn eval unit tests
-        run: make eval
+      - name: Compare single-turn evals with the committed reference
+        run: make eval-ci
         env:
           CI_RUN_ID: pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

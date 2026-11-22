@@ -1,22 +1,56 @@
-"""Reference-baseline comparison and delivery policy for Divination evals."""
+"""Per-case comparison with a committed reference, and the delivery policy.
 
-from datetime import datetime, timezone
+The reference (``backend/tests/evals/baselines/<suite>.json``) stores, for
+each case, how many attempts passed when the accepted version of the
+application was evaluated many times. A developer rebuilds it by hand and
+commits it, so accepting new behavior is always an explicit, reviewed change.
+
+A run is judged case by case. Each case runs once; if that attempt fails and
+the case passes often enough in its reference for a decline to be provable,
+it becomes a *suspect* and gets extra attempts. The pooled attempts are then
+compared with the reference with a one-sided Fisher exact test: "if this
+case's pass rate had not changed, how likely would this many failures be?"
+Below ``regression_below`` the case is a confirmed *regression*. The policy
+blocks only on a confirmed regression or on missing evidence (an incomplete
+attempt, or a case without a reference). Everything else is reported.
+"""
+
 import json
+from math import comb
+import os
 from pathlib import Path
 import re
+import sys
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DEFAULT_POLICY = {
-    "block_on_regression": True,
-    "block_on_incomplete": True,
-    "block_on_new_case_failure": True,
-    "max_limitation_score_drop": 0.1,
-    "known_limitations": {},
+    # Attempts per case when the reference is rebuilt.
+    "baseline_attempts": 20,
+    # Extra attempts for a case whose first attempt failed, before it can block.
+    "confirmation_attempts": 5,
+    # Pooled attempts less likely than this under an unchanged pass rate are a
+    # confirmed regression. With 20 reference attempts and 6 pooled attempts,
+    # 0.01 falsely blocks a case at most ~0.3% of the time (about one false
+    # block per 40 pull requests for this suite), while a case that stops
+    # passing is always caught.
+    "regression_below": 0.01,
+    # Rebuild report: a case whose new reference differs from the previous one
+    # with less likelihood than this is listed as worse or improved.
+    "change_below": 0.05,
 }
 
-_POLICY_KEYS = set(DEFAULT_POLICY)
+BLOCKING_VERDICTS = ("regression", "no_reference", "incomplete")
+
+
+# ---------------------------------------------------------------- settings
+
+
+def _worst_case_p_value(reference, pooled_attempts):
+    """The p-value if every pooled attempt failed: the strongest evidence a
+    confirmation could produce against this reference."""
+    return decline_p_value(reference, {"passed": 0, "attempts": pooled_attempts})
 
 
 def load_policy(path):
@@ -24,57 +58,36 @@ def load_policy(path):
     raw = json.loads(Path(path).read_text())
     if not isinstance(raw, dict):
         raise ValueError("Delivery policy must be a JSON object.")
-    unknown = set(raw) - _POLICY_KEYS
+    unknown = set(raw) - set(DEFAULT_POLICY)
     if unknown:
         names = ", ".join(sorted(unknown))
         raise ValueError(f"Unknown delivery policy keys: {names}")
 
-    policy = dict(DEFAULT_POLICY)
-    policy.update(raw)
-
-    for key in (
-        "block_on_regression",
-        "block_on_incomplete",
-        "block_on_new_case_failure",
-    ):
-        if not isinstance(policy[key], bool):
-            raise ValueError(f"Policy field '{key}' must be a boolean.")
-
-    max_drop = policy["max_limitation_score_drop"]
-    if (
-        not isinstance(max_drop, (int, float))
-        or isinstance(max_drop, bool)
-        or max_drop < 0
-    ):
+    policy = {**DEFAULT_POLICY, **raw}
+    for key in ("baseline_attempts", "confirmation_attempts"):
+        value = policy[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"Policy field '{key}' must be a positive integer.")
+    for key in ("regression_below", "change_below"):
+        value = policy[key]
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not 0 < value < 1
+        ):
+            raise ValueError(f"Policy field '{key}' must be between 0 and 1.")
+        policy[key] = float(value)
+    perfect = {
+        "passed": policy["baseline_attempts"],
+        "attempts": policy["baseline_attempts"],
+    }
+    pooled = 1 + policy["confirmation_attempts"]
+    if _worst_case_p_value(perfect, pooled) >= policy["regression_below"]:
         raise ValueError(
-            "Policy field 'max_limitation_score_drop' must be >= 0."
+            "Policy fields 'baseline_attempts' and 'confirmation_attempts' are "
+            "too small: even a case that always passed and now fails every "
+            "attempt could not be confirmed below 'regression_below'."
         )
-    policy["max_limitation_score_drop"] = float(max_drop)
-
-    limitations = policy["known_limitations"]
-    if not isinstance(limitations, dict):
-        raise ValueError("Policy field 'known_limitations' must be an object.")
-    normalized_limitations = {}
-    for case_name, entry in limitations.items():
-        if not isinstance(entry, dict):
-            raise ValueError(
-                f"Known limitation '{case_name}' must be an object."
-            )
-        blocking = entry.get("blocking", False)
-        if not isinstance(blocking, bool):
-            raise ValueError(
-                f"Known limitation '{case_name}.blocking' must be a boolean."
-            )
-        reason = entry.get("reason", "")
-        if not isinstance(reason, str):
-            raise ValueError(
-                f"Known limitation '{case_name}.reason' must be a string."
-            )
-        normalized_limitations[case_name] = {
-            "blocking": blocking,
-            "reason": reason,
-        }
-    policy["known_limitations"] = normalized_limitations
     return policy
 
 
@@ -109,7 +122,7 @@ def load_expected_case_names(dataset_path):
             other = seen_files[safe]
             raise ValueError(
                 f"Evaluation case names '{other}' and '{name}' collide on "
-                f"result filename '{safe}.json'."
+                f"result filename '{safe}'."
             )
         seen_names.add(name)
         seen_files[safe] = name
@@ -117,55 +130,45 @@ def load_expected_case_names(dataset_path):
     return names
 
 
-def collect_run_report(
-    results_dir,
-    *,
-    suite,
-    run_id,
-    commit,
-    expected_cases,
-    deepeval_exit_code,
-):
-    """Consolidate per-case result JSON files into one run report."""
+# ---------------------------------------------------------------- attempts
+
+
+def collect_attempts(results_dir, expected_cases):
+    """Group a run's attempt files by case, keeping the dataset's order.
+
+    The recorder writes one JSON file per attempt; a case with no file has no
+    attempts and is judged as missing evidence. Only ``expected_cases`` are
+    collected.
+    """
+    attempts = {name: [] for name in expected_cases}
     directory = Path(results_dir)
-    cases = {}
     if directory.exists():
-        for file_path in sorted(directory.glob("*.json")):
-            if file_path.name.startswith("."):
+        # Rounds write to subdirectories; order attempts by time, so the
+        # "latest failed attempt" shown in reports really is the latest.
+        paths = sorted(
+            directory.rglob("*.json"),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        for path in paths:
+            if path.name.startswith("."):
                 continue
-            record = json.loads(file_path.read_text())
-            name = record.get("name")
-            if isinstance(name, str) and name:
-                cases[name] = record
-
-    for case_name in expected_cases:
-        if case_name not in cases:
-            cases[case_name] = {
-                "name": case_name,
-                "status": "incomplete",
-                "error": "Case did not produce an evaluation result.",
-                "metrics": [],
-            }
-
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "suite": suite,
-        "run_id": run_id,
-        "commit": commit,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "deepeval_exit_code": deepeval_exit_code,
-        "cases": cases,
-    }
+            record = json.loads(path.read_text())
+            name = record.get("name") if isinstance(record, dict) else None
+            # Files for cases outside this run's selection are ignored, so
+            # they can never enter a reference or a decision.
+            if name in attempts:
+                attempts[name].append(record)
+    return attempts
 
 
-def _case_is_incomplete(case_record):
-    if not isinstance(case_record, dict):
+def _is_incomplete(record):
+    if not isinstance(record, dict):
         return True
-    if case_record.get("status") not in ("passed", "failed"):
+    if record.get("status") not in ("passed", "failed"):
         return True
-    if case_record.get("error"):
+    if record.get("error"):
         return True
-    metrics = case_record.get("metrics")
+    metrics = record.get("metrics")
     if not isinstance(metrics, list) or not metrics:
         return True
     for metric in metrics:
@@ -180,410 +183,640 @@ def _case_is_incomplete(case_record):
     return False
 
 
-def _metric_deltas(candidate_metrics, baseline_metrics):
-    baseline_scores = {}
-    for metric in baseline_metrics or []:
-        name = metric.get("name")
-        score = metric.get("score")
-        if (
-            isinstance(name, str)
-            and isinstance(score, (int, float))
-            and not isinstance(score, bool)
-        ):
-            baseline_scores[name] = float(score)
+def tally(records):
+    """Passing attempts out of complete attempts, plus incomplete attempts.
 
-    deltas = {}
-    for metric in candidate_metrics or []:
-        name = metric.get("name")
-        score = metric.get("score")
-        if (
-            isinstance(name, str)
-            and isinstance(score, (int, float))
-            and not isinstance(score, bool)
-            and name in baseline_scores
-        ):
-            deltas[name] = round(float(score) - baseline_scores[name], 4)
-    return deltas
-
-
-def _worsened_metrics(deltas, max_drop):
-    return {
-        name: delta
-        for name, delta in deltas.items()
-        if delta < -(max_drop + 1e-9)
-    }
-
-
-def _newly_failing_metrics(candidate_metrics, baseline_metrics):
-    baseline_pass = {
-        metric.get("name"): metric.get("success")
-        for metric in (baseline_metrics or [])
-        if isinstance(metric, dict) and isinstance(metric.get("name"), str)
-    }
-    regressed = []
-    for metric in candidate_metrics or []:
-        if not isinstance(metric, dict):
-            continue
-        name = metric.get("name")
-        if (
-            isinstance(name, str)
-            and baseline_pass.get(name) is True
-            and metric.get("success") is False
-        ):
-            regressed.append(name)
-    return sorted(regressed)
-
-
-def report_has_incomplete_cases(report):
-    """Return True when any case in a saved report is incomplete."""
-    cases = report.get("cases", {})
-    if not isinstance(cases, dict) or not cases:
-        return True
-    return any(_case_is_incomplete(record) for record in cases.values())
-
-
-def compare_and_decide(candidate_report, baseline_report, policy):
-    """Compare a candidate run against a baseline and apply delivery policy."""
-    candidate_cases = candidate_report.get("cases", {})
-    baseline_cases = (
-        baseline_report.get("cases", {})
-        if isinstance(baseline_report, dict)
-        else {}
-    )
-    limitations = policy["known_limitations"]
-    max_drop = policy["max_limitation_score_drop"]
-
-    summary = {
-        "still_passing": 0,
-        "potential_regression": 0,
-        "improvement_observed": 0,
-        "continuing_limitation": 0,
-        "new_case": 0,
-        "incomplete_assessment": 0,
-        "removed_cases": 0,
-    }
-    blocking_reasons = []
-    non_blocking_notices = []
-    case_details = {}
-
-    if baseline_report is None:
-        non_blocking_notices.append(
-            {
-                "case": None,
-                "category": "no_baseline",
-                "message": (
-                    "No reference baseline found; evaluating each case "
-                    "against its own criteria."
-                ),
-            }
-        )
-
-    for name in sorted(candidate_cases):
-        candidate = candidate_cases[name]
-        baseline = baseline_cases.get(name)
-        limitation = limitations.get(name)
-        non_blocking_limitation = (
-            limitation is not None and not limitation["blocking"]
-        )
-        deltas = (
-            _metric_deltas(
-                candidate.get("metrics"),
-                baseline.get("metrics") if baseline else [],
-            )
-            if baseline is not None
-            else {}
-        )
-
-        if _case_is_incomplete(candidate):
-            category = "incomplete_assessment"
-            summary[category] += 1
-            reason = (
-                candidate.get("error")
-                or "One or more metrics did not produce a complete verdict."
-            )
-            entry = {
-                "case": name,
-                "category": category,
-                "message": reason,
-            }
-            if policy["block_on_incomplete"]:
-                blocking_reasons.append(entry)
-            else:
-                non_blocking_notices.append(entry)
-            case_details[name] = {
-                "category": category,
-                "candidate_status": "incomplete",
-                "baseline_status": (
-                    baseline.get("status") if baseline else None
-                ),
-                "metric_deltas": deltas,
-                "blocking": policy["block_on_incomplete"],
-                "message": reason,
-            }
-            continue
-
-        cand_status = candidate["status"]
-        has_valid_baseline = (
-            baseline is not None and not _case_is_incomplete(baseline)
-        )
-
-        if has_valid_baseline:
-            base_status = baseline["status"]
-            if base_status == "passed" and cand_status == "passed":
-                category = "still_passing"
-                summary[category] += 1
-                case_details[name] = {
-                    "category": category,
-                    "candidate_status": cand_status,
-                    "baseline_status": base_status,
-                    "metric_deltas": deltas,
-                    "blocking": False,
-                }
-            elif base_status == "passed" and cand_status == "failed":
-                category = "potential_regression"
-                summary[category] += 1
-                entry = {
-                    "case": name,
-                    "category": category,
-                    "message": (
-                        "Passed in reference baseline but failed in candidate."
-                    ),
-                }
-                if policy["block_on_regression"]:
-                    blocking_reasons.append(entry)
-                else:
-                    non_blocking_notices.append(entry)
-                case_details[name] = {
-                    "category": category,
-                    "candidate_status": cand_status,
-                    "baseline_status": base_status,
-                    "metric_deltas": deltas,
-                    "blocking": policy["block_on_regression"],
-                }
-            elif base_status == "failed" and cand_status == "passed":
-                category = "improvement_observed"
-                summary[category] += 1
-                if limitation is not None:
-                    non_blocking_notices.append(
-                        {
-                            "case": name,
-                            "category": "resolved_limitation",
-                            "message": (
-                                "Case passed; once accepted, re-record the "
-                                "reference baseline (record-baseline) and "
-                                "remove it from known_limitations in "
-                                "policy.json."
-                            ),
-                        }
-                    )
-                else:
-                    non_blocking_notices.append(
-                        {
-                            "case": name,
-                            "category": "update_baseline",
-                            "message": (
-                                "Case passed; once accepted, re-record the "
-                                "reference baseline (record-baseline) so "
-                                "future runs protect this improvement."
-                            ),
-                        }
-                    )
-                case_details[name] = {
-                    "category": category,
-                    "candidate_status": cand_status,
-                    "baseline_status": base_status,
-                    "metric_deltas": deltas,
-                    "blocking": False,
-                }
-            else:
-                category = "continuing_limitation"
-                summary[category] += 1
-                newly_failing = _newly_failing_metrics(
-                    candidate.get("metrics"),
-                    baseline.get("metrics"),
-                )
-                worsened = _worsened_metrics(deltas, max_drop)
-                if newly_failing:
-                    metric_list = ", ".join(newly_failing)
-                    message = (
-                        "Previously passing metric(s) now failed on a "
-                        f"continuing-limitation case: {metric_list}."
-                    )
-                    entry = {
-                        "case": name,
-                        "category": "continuing_limitation_metric_regression",
-                        "message": message,
-                    }
-                    if policy["block_on_regression"]:
-                        blocking_reasons.append(entry)
-                        blocked = True
-                    else:
-                        non_blocking_notices.append(entry)
-                        blocked = False
-                elif worsened:
-                    drops = ", ".join(
-                        f"{metric} ({delta:+.2f})"
-                        for metric, delta in sorted(worsened.items())
-                    )
-                    message = (
-                        "Continuing limitation worsened beyond tolerance "
-                        f"({max_drop:.2f}): {drops}."
-                    )
-                    blocking_reasons.append(
-                        {
-                            "case": name,
-                            "category": "continuing_limitation_worsened",
-                            "message": message,
-                        }
-                    )
-                    blocked = True
-                elif non_blocking_limitation:
-                    reason = limitation["reason"] or "Declared non-blocking."
-                    non_blocking_notices.append(
-                        {
-                            "case": name,
-                            "category": category,
-                            "message": f"Non-blocking limitation: {reason}",
-                        }
-                    )
-                    blocked = False
-                else:
-                    if limitation is not None:
-                        message = (
-                            "Known limitation is marked blocking: "
-                            f"{limitation['reason'] or 'fix required.'}"
-                        )
-                    else:
-                        message = (
-                            "Continuing failure is not declared as a "
-                            "non-blocking known limitation in policy.json."
-                        )
-                    blocking_reasons.append(
-                        {
-                            "case": name,
-                            "category": category,
-                            "message": message,
-                        }
-                    )
-                    blocked = True
-                case_details[name] = {
-                    "category": category,
-                    "candidate_status": cand_status,
-                    "baseline_status": base_status,
-                    "metric_deltas": deltas,
-                    "newly_failing_metrics": newly_failing,
-                    "worsened_metrics": worsened,
-                    "blocking": blocked,
-                }
+    An attempt passes only if every metric met its threshold.
+    """
+    passed = failed = incomplete = 0
+    for record in records:
+        if _is_incomplete(record):
+            incomplete += 1
+        elif record["status"] == "passed":
+            passed += 1
         else:
-            category = "new_case"
-            summary[category] += 1
-            blocked = False
-            if cand_status == "failed":
-                if non_blocking_limitation:
-                    reason = limitation["reason"] or "Declared non-blocking."
-                    non_blocking_notices.append(
-                        {
-                            "case": name,
-                            "category": "known_limitation",
-                            "message": f"Non-blocking limitation: {reason}",
-                        }
-                    )
-                elif policy["block_on_new_case_failure"]:
-                    blocking_reasons.append(
-                        {
-                            "case": name,
-                            "category": "new_case_failure",
-                            "message": (
-                                "Case without baseline failed its criteria."
-                            ),
-                        }
-                    )
-                    blocked = True
-                else:
-                    non_blocking_notices.append(
-                        {
-                            "case": name,
-                            "category": "new_case_failure",
-                            "message": (
-                                "Case without baseline failed (non-blocking "
-                                "by policy)."
-                            ),
-                        }
-                    )
-            case_details[name] = {
-                "category": category,
-                "candidate_status": cand_status,
-                "baseline_status": (
-                    baseline.get("status") if baseline else None
-                ),
-                "metric_deltas": deltas,
-                "blocking": blocked,
-            }
-
-    removed_cases = sorted(set(baseline_cases) - set(candidate_cases))
-    summary["removed_cases"] = len(removed_cases)
-    for name in removed_cases:
-        non_blocking_notices.append(
-            {
-                "case": name,
-                "category": "removed_case",
-                "message": "Present in reference baseline but absent now.",
-            }
-        )
-
+            failed += 1
     return {
-        "allow_delivery": not blocking_reasons,
-        "suite": candidate_report.get("suite"),
-        "candidate_commit": candidate_report.get("commit"),
-        "baseline_commit": (
-            baseline_report.get("commit")
-            if isinstance(baseline_report, dict)
-            else None
-        ),
-        "summary": summary,
-        "blocking_reasons": blocking_reasons,
-        "non_blocking_notices": non_blocking_notices,
-        "removed_cases": removed_cases,
-        "cases": case_details,
+        "passed": passed,
+        "attempts": passed + failed,
+        "incomplete": incomplete,
     }
 
 
-def format_report(decision):
-    """Render a concise human-readable summary of a delivery decision."""
-    verdict = "ALLOW" if decision["allow_delivery"] else "BLOCK"
-    summary = decision["summary"]
-    lines = [
-        f"Evaluation delivery policy: {verdict}",
-        (
-            "Suite: "
-            f"{decision.get('suite') or 'unknown'} | "
-            f"Candidate: {decision.get('candidate_commit') or 'uncommitted'} | "
-            f"Baseline: {decision.get('baseline_commit') or 'none'}"
-        ),
-        (
-            "Summary: "
-            f"still_passing={summary['still_passing']}, "
-            f"potential_regression={summary['potential_regression']}, "
-            f"improvement_observed={summary['improvement_observed']}, "
-            f"continuing_limitation={summary['continuing_limitation']}, "
-            f"new_case={summary['new_case']}, "
-            f"incomplete_assessment={summary['incomplete_assessment']}, "
-            f"removed_cases={summary['removed_cases']}"
-        ),
+# ---------------------------------------------------------------- Fisher
+
+
+def _upper_tail(population, marked, drawn, observed):
+    """P(X >= observed) for X ~ Hypergeometric(population, marked, drawn)."""
+    if observed <= 0:
+        return 1.0
+    total = comb(population, drawn)
+    return (
+        sum(
+            comb(marked, k) * comb(population - marked, drawn - k)
+            for k in range(observed, min(marked, drawn) + 1)
+        )
+        / total
+    )
+
+
+def decline_p_value(reference, recent):
+    """One-sided Fisher exact test for a lower pass rate in ``recent``.
+
+    If both share one pass rate, every attempt is interchangeable, so the
+    failures could have fallen on any of them. This is the chance that
+    ``recent`` holds at least as many of them as it does.
+    """
+    failures = (reference["attempts"] - reference["passed"]) + (
+        recent["attempts"] - recent["passed"]
+    )
+    return _upper_tail(
+        reference["attempts"] + recent["attempts"],
+        failures,
+        recent["attempts"],
+        recent["attempts"] - recent["passed"],
+    )
+
+
+def improvement_p_value(reference, recent):
+    """One-sided Fisher exact test for a higher pass rate in ``recent``."""
+    passes = reference["passed"] + recent["passed"]
+    return _upper_tail(
+        reference["attempts"] + recent["attempts"],
+        passes,
+        recent["attempts"],
+        recent["passed"],
+    )
+
+
+# ---------------------------------------------------------------- verdicts
+
+
+def _reference(baseline, name):
+    entry = ((baseline or {}).get("cases") or {}).get(name)
+    if (
+        not isinstance(entry, dict)
+        or not isinstance(entry.get("passed"), int)
+        or not isinstance(entry.get("attempts"), int)
+        or entry["attempts"] < 1
+    ):
+        return None
+    return {"passed": entry["passed"], "attempts": entry["attempts"]}
+
+
+def can_confirm(reference, policy):
+    """Whether extra attempts could prove a decline for this reference.
+
+    A case that rarely passes in its reference cannot be shown to have
+    declined with a handful of attempts, so confirming it would only spend
+    API calls.
+    """
+    pooled = 1 + policy["confirmation_attempts"]
+    return _worst_case_p_value(reference, pooled) < policy["regression_below"]
+
+
+def find_suspects(attempts, baseline, policy):
+    """Cases whose first attempt failed and whose decline could be proven."""
+    suspects = []
+    for name, records in attempts.items():
+        reference = _reference(baseline, name)
+        result = tally(records)
+        if reference is None or result["incomplete"] or not result["attempts"]:
+            continue
+        if result["passed"] < result["attempts"] and can_confirm(reference, policy):
+            suspects.append(name)
+    return suspects
+
+
+def decide(
+    attempts,
+    baseline,
+    policy,
+    *,
+    suspects=(),
+    expected_attempts=None,
+    require_reference=True,
+):
+    """Judge every case against its reference and decide delivery.
+
+    ``expected_attempts`` maps a case to how many attempts it should have;
+    fewer recorded attempts mean missing evidence. Without
+    ``require_reference``, cases are reported against their own criteria
+    only and never block for failing.
+    """
+    expected_attempts = expected_attempts or {}
+    cases = {}
+    for name, records in attempts.items():
+        result = tally(records)
+        reference = _reference(baseline, name)
+        missing = max(
+            0,
+            expected_attempts.get(name, 1)
+            - result["attempts"]
+            - result["incomplete"],
+        )
+        entry = {
+            "run": {"passed": result["passed"], "attempts": result["attempts"]},
+            "incomplete_attempts": result["incomplete"] + missing,
+            "reference": reference,
+            "p_value": None,
+            "suspect": name in suspects,
+        }
+        if result["incomplete"] or missing or not result["attempts"]:
+            verdict = "incomplete"
+        elif reference is None:
+            verdict = "no_reference" if require_reference else "unreferenced"
+        else:
+            entry["p_value"] = decline_p_value(reference, result)
+            if name in suspects:
+                verdict = (
+                    "regression"
+                    if entry["p_value"] < policy["regression_below"]
+                    else "suspect_cleared"
+                )
+            else:
+                verdict = "consistent"
+        entry["verdict"] = verdict
+        entry["blocking"] = verdict in BLOCKING_VERDICTS
+        cases[name] = entry
+
+    referenced = set(((baseline or {}).get("cases") or {}))
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "allow_delivery": not any(entry["blocking"] for entry in cases.values()),
+        "policy": policy,
+        "cases": cases,
+        "stale_reference_entries": sorted(referenced - set(attempts)),
+    }
+
+
+# ---------------------------------------------------------------- baseline
+
+
+def build_baseline(
+    attempts, previous, policy, *, suite, commit, recorded_at, full
+):
+    """The new reference from a baseline run, and what changed.
+
+    A case is recorded from its complete attempts if it has at least
+    ``baseline_attempts`` of them; otherwise its previous entry is kept. A
+    full rebuild also drops entries for cases no longer in the dataset.
+    """
+    minimum = policy["baseline_attempts"]
+    entries = dict(((previous or {}).get("cases") or {}))
+    removed = []
+    if full:
+        removed = sorted(set(entries) - set(attempts))
+        for name in removed:
+            del entries[name]
+
+    changes = {
+        "recorded": [],
+        "fails": [],
+        "worse": [],
+        "improved": [],
+        "new": [],
+        "not_recorded": [],
+        "removed": removed,
+    }
+    for name, records in attempts.items():
+        result = tally(records)
+        if result["attempts"] < minimum:
+            changes["not_recorded"].append(
+                {
+                    "case": name,
+                    "attempts": result["attempts"],
+                    "incomplete": result["incomplete"],
+                }
+            )
+            continue
+        new = {"passed": result["passed"], "attempts": result["attempts"]}
+        old = _reference(previous, name)
+        if old is None:
+            changes["new"].append({"case": name, "new": new})
+        else:
+            worse = decline_p_value(old, new)
+            better = improvement_p_value(old, new)
+            if worse < policy["change_below"]:
+                changes["worse"].append(
+                    {"case": name, "old": old, "new": new, "p_value": worse}
+                )
+            elif better < policy["change_below"]:
+                changes["improved"].append(
+                    {"case": name, "old": old, "new": new, "p_value": better}
+                )
+        if new["passed"] < new["attempts"]:
+            changes["fails"].append({"case": name, "new": new})
+        if result["incomplete"]:
+            new["incomplete_attempts"] = result["incomplete"]
+        entries[name] = {**new, "commit": commit, "recorded_at": recorded_at}
+        changes["recorded"].append(name)
+
+    baseline = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": suite,
+        "cases": dict(sorted(entries.items())),
+    }
+    return baseline, changes
+
+
+# ---------------------------------------------------------------- output
+
+
+_RATE_LIMIT = re.compile(r"\b429\b|rate.?limit", re.IGNORECASE)
+_MAX_REASON_LENGTH = 160
+
+_VERDICT_LABEL = {
+    "regression": "REGRESSION",
+    "no_reference": "NO REFERENCE",
+    "incomplete": "INCOMPLETE",
+    "suspect_cleared": "not confirmed",
+    "unreferenced": "failed",
+}
+
+_VERDICT_STYLE = {
+    "regression": ("red", "bold"),
+    "no_reference": ("yellow",),
+    "incomplete": ("yellow",),
+    "suspect_cleared": ("dim",),
+    "unreferenced": ("red",),
+}
+
+_ANSI = {"bold": "1", "dim": "2", "red": "31", "green": "32", "yellow": "33"}
+
+
+def use_color():
+    """Colors in a terminal and in GitHub Actions logs; never in files.
+
+    NO_COLOR (https://no-color.org) turns them off; FORCE_COLOR turns them on.
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR") or os.environ.get("GITHUB_ACTIONS") == "true":
+        return True
+    return sys.stdout.isatty()
+
+
+def paint(text, *styles):
+    """``text`` wrapped in ANSI styles, or unchanged when colors are off."""
+    if not styles or not text or not use_color():
+        return text
+    codes = ";".join(_ANSI[style] for style in styles)
+    return f"\033[{codes}m{text}\033[0m"
+
+
+def _title(text):
+    return paint(text, "bold")
+
+
+def _short_reason(message):
+    """One line per reason: provider rate limits collapse to a fixed text."""
+    text = str(message or "").strip()
+    if _RATE_LIMIT.search(text):
+        return "Rate limit exceeded (HTTP 429); retry with fewer workers."
+    return _one_line(text)
+
+
+def _one_line(text, limit=None):
+    limit = limit or _MAX_REASON_LENGTH
+    flat = " ".join(str(text or "").split())
+    return flat if len(flat) <= limit else flat[: limit - 3] + "..."
+
+
+def _short_metric_name(name):
+    """Display name: "AnswerRelevancyMetric" and "Rules Correctness [GEval]"
+    become "Answer Relevancy" and "Rules Correctness"."""
+    text = re.sub(r"\s*\[[^\]]*\]$", "", str(name or "metric"))
+    text = re.sub(r"(?<=\w)Metric$", "", text)
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+
+
+def _ratio(counts):
+    return f"{counts['passed']}/{counts['attempts']}" if counts else "-"
+
+
+def _p(value):
+    if value is None:
+        return ""
+    if value < 0.0001:
+        return "p < 0.0001"
+    return "p = " + f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def _table(rows, indent="  ", header=False):
+    """Left-aligned columns; with ``header``, a bold first row and a rule.
+
+    A cell is text, or ``(text, styles)`` to color it; padding is computed on
+    the text, so colors never break the alignment.
+    """
+    cells = [
+        [cell if isinstance(cell, tuple) else (cell, ()) for cell in row]
+        for row in rows
     ]
-    if decision["blocking_reasons"]:
-        lines.append("Blocking findings:")
-        for item in decision["blocking_reasons"]:
-            prefix = f"{item['case']}: " if item.get("case") else ""
-            lines.append(
-                f"  - [{item['category']}] {prefix}{item['message']}"
+    widths = [
+        max(len(row[i][0]) for row in cells) for i in range(len(cells[0]))
+    ]
+    lines = []
+    for number, row in enumerate(cells):
+        parts = []
+        for (text, styles), width in zip(row, widths):
+            if header and number == 0:
+                styles = ("bold",)
+            padding = " " * (width - len(text))
+            parts.append(paint(text, *styles) + padding)
+        lines.append((indent + "  ".join(parts)).rstrip())
+    if header:
+        lines.insert(1, indent + paint("  ".join("-" * w for w in widths), "dim"))
+    return lines
+
+
+def _case_list(names, limit=3):
+    shown = ", ".join(names[:limit])
+    return shown + (f" and {len(names) - limit} more" if len(names) > limit else "")
+
+
+def _reasons(name, records):
+    """Why the latest failing or incomplete attempt of a case went wrong."""
+    for record in reversed(records):
+        if _is_incomplete(record):
+            errors = [record.get("error")] + [
+                metric.get("error") for metric in record.get("metrics") or []
+            ]
+            message = next((error for error in errors if error), None)
+            return [
+                f"  {paint(name, 'bold')}: "
+                f"{_short_reason(message or 'no verdict recorded')}"
+            ]
+        failed = [
+            metric
+            for metric in record.get("metrics") or []
+            if metric.get("status") == "failed"
+        ]
+        if failed:
+            return [
+                f"  {paint(name, 'bold')} / "
+                f"{_short_metric_name(metric.get('name'))}: "
+                f"{_one_line(metric.get('reason') or 'no reason recorded')}"
+                for metric in failed
+            ]
+    return []
+
+
+def _metric_cell(metric):
+    status = metric.get("status")
+    score = metric.get("score")
+    style = ("green",) if status == "passed" else ("red",)
+    if status in ("passed", "failed") and isinstance(score, (int, float)):
+        return (f"{score:.2f} {'✓' if status == 'passed' else '✗'}", style)
+    if status in ("passed", "failed"):
+        return ("✓" if status == "passed" else "✗", style)
+    return ("error" if status == "error" else "?", ("yellow",))
+
+
+_RESULT_STYLE = {
+    "FAIL": ("red", "bold"),
+    "INCOMPLETE": ("yellow",),
+    "pass": ("green",),
+}
+
+
+def format_results(attempts):
+    """A quick run's table: every case and metric, failing cases first,
+    followed by the judge's reason for each failed metric."""
+    columns = []
+    rows = []
+    for name, records in attempts.items():
+        record = records[-1] if records else {"status": "incomplete", "metrics": []}
+        cells = {}
+        for metric in record.get("metrics") or []:
+            column = _short_metric_name(metric.get("name"))
+            if column not in columns:
+                columns.append(column)
+            cells[column] = _metric_cell(metric)
+        if _is_incomplete(record):
+            result = "INCOMPLETE"
+        else:
+            result = "pass" if record.get("status") == "passed" else "FAIL"
+        rows.append((name, cells, result))
+    order = {"FAIL": 0, "INCOMPLETE": 1, "pass": 2}
+    rows.sort(key=lambda row: (order[row[2]], row[0]))
+
+    table = [["Case", *columns, "Result"]] + [
+        [
+            name,
+            *(cells.get(column, ("-", ("dim",))) for column in columns),
+            (result, _RESULT_STYLE[result]),
+        ]
+        for name, cells, result in rows
+    ]
+    lines = _table(table, indent="", header=True)
+    passed = sum(1 for row in rows if row[2] == "pass")
+    summary = f"{passed} of {len(rows)} cases passed every metric."
+    lines.append(paint(summary, "bold", "green" if passed == len(rows) else "red"))
+
+    reasons = [
+        line
+        for name, _, result in rows
+        if result != "pass"
+        for line in _reasons(name, attempts.get(name, []))
+    ]
+    if reasons:
+        lines += ["", _title("Why (judge's reasons, shortened):")] + reasons
+    return "\n".join(lines)
+
+
+def format_decision(decision, attempts, *, suite, reference_path=None):
+    """The run's report: what needs attention, accepted failures, decision."""
+    cases = decision["cases"]
+    order = {
+        "regression": 0,
+        "incomplete": 1,
+        "no_reference": 2,
+        "suspect_cleared": 3,
+        "unreferenced": 4,
+    }
+    attention = sorted(
+        (
+            (name, entry)
+            for name, entry in cases.items()
+            if entry["verdict"] in order
+            and not (
+                entry["verdict"] == "unreferenced"
+                and entry["run"]["passed"] == entry["run"]["attempts"]
             )
-    if decision["non_blocking_notices"]:
-        lines.append("Non-blocking notices:")
-        for item in decision["non_blocking_notices"]:
-            prefix = f"{item['case']}: " if item.get("case") else ""
-            lines.append(
-                f"  - [{item['category']}] {prefix}{item['message']}"
+        ),
+        key=lambda item: (order[item[1]["verdict"]], item[0]),
+    )
+
+    header = f"Suite: {suite}"
+    if reference_path:
+        header += f" | Reference: {reference_path}"
+    lines = [paint(header, "dim")]
+    if attention:
+        lines += ["", _title("Needs attention:")]
+        rows = [["Case", "Reference", "This run", "Verdict"]]
+        for name, entry in attention:
+            verdict = _VERDICT_LABEL[entry["verdict"]]
+            if entry["verdict"] == "incomplete":
+                verdict += f" ({entry['incomplete_attempts']} attempt(s) without a verdict)"
+            elif entry["p_value"] is not None:
+                verdict += f" ({_p(entry['p_value'])})"
+            rows.append(
+                [
+                    name,
+                    _ratio(entry["reference"]),
+                    _ratio(entry["run"]),
+                    (verdict, _VERDICT_STYLE[entry["verdict"]]),
+                ]
             )
+        lines += _table(rows, header=True)
+        reasons = [
+            line
+            for name, _ in attention
+            for line in _reasons(name, attempts.get(name, []))
+        ]
+        if reasons:
+            lines += [
+                "",
+                _title("Why (latest failed attempt, judge's reasons shortened):"),
+            ]
+            lines += reasons
+
+    quiet = len(cases) - len(attention)
+    summary = (
+        f"{quiet} of {len(cases)} cases match their reference."
+        if any(e["reference"] for e in cases.values())
+        else f"{quiet} of {len(cases)} cases passed."
+    )
+    lines += ["", paint(summary, "green")]
+
+    accepted = sorted(
+        (
+            (name, entry["reference"])
+            for name, entry in cases.items()
+            if entry["reference"]
+            and entry["reference"]["passed"] < entry["reference"]["attempts"]
+        ),
+        key=lambda item: (item[1]["passed"] / item[1]["attempts"], item[0]),
+    )
+    if accepted:
+        lines += [
+            "",
+            _title("Fails in the reference (accepted behavior, not regressions):"),
+        ]
+        lines += _table(
+            [[name, (_ratio(reference), ("yellow",))] for name, reference in accepted]
+        )
+
+    if decision["stale_reference_entries"]:
+        lines += [
+            "",
+            "The reference still has cases no longer in the dataset: "
+            + _case_list(decision["stale_reference_entries"])
+            + ". A full rebuild (make eval-baseline) drops them.",
+        ]
+
+    steps = _next_steps(cases)
+    if steps:
+        lines += ["", _title("Next steps:")] + [f"  - {step}" for step in steps]
+
+    blocking = [entry["verdict"] for entry in cases.values() if entry["blocking"]]
+    if blocking:
+        counts = ", ".join(
+            f"{blocking.count(verdict)} {_VERDICT_LABEL[verdict].lower()}"
+            for verdict in BLOCKING_VERDICTS
+            if verdict in blocking
+        )
+        lines += ["", paint(f"Decision: BLOCK ({counts})", "red", "bold")]
+    else:
+        lines += ["", paint("Decision: ALLOW", "green", "bold")]
+    return "\n".join(lines)
+
+
+def _next_steps(cases):
+    def named(verdict):
+        return sorted(name for name, e in cases.items() if e["verdict"] == verdict)
+
+    steps = []
+    regressions = named("regression")
+    if regressions:
+        steps.append(
+            "Investigate the regressions (" + _case_list(regressions) + "). "
+            "If the new behavior is acceptable, rebuild their reference with "
+            "make eval-baseline CASE=<name> and commit it."
+        )
+    unreferenced = named("no_reference")
+    if unreferenced:
+        steps.append(
+            "Build the reference for new cases ("
+            + _case_list(unreferenced)
+            + "): make eval-baseline CASE=<name>, then commit "
+            "the baseline file."
+        )
+    if named("incomplete"):
+        steps.append(
+            "Rerun the evaluation: some attempts produced no verdict "
+            "(errors or rate limits; EVAL_WORKERS=1 is the safe setting)."
+        )
+    return steps
+
+
+def format_baseline_changes(changes, *, path, attempts_per_case):
+    """What a baseline rebuild changed, for the developer to review."""
+    lines = [
+        f"Recorded {len(changes['recorded'])} case(s) with up to "
+        f"{attempts_per_case} attempts each in {path}."
+    ]
+
+    def section(title, rows, style=()):
+        if rows:
+            lines.extend(["", _title(title)])
+            lines.extend(
+                _table([[row[0], *((cell, style) for cell in row[1:])] for row in rows])
+            )
+
+    def change(item):
+        return [
+            item["case"],
+            f"{_ratio(item['old'])} -> {_ratio(item['new'])}",
+            f"({_p(item['p_value'])})",
+        ]
+
+    section(
+        "Fails in the new baseline:",
+        [
+            [item["case"], _ratio(item["new"])]
+            for item in sorted(
+                changes["fails"],
+                key=lambda i: (i["new"]["passed"] / i["new"]["attempts"], i["case"]),
+            )
+        ],
+        ("yellow",),
+    )
+    section(
+        "Got worse than the previous baseline (accepting this accepts the decline):",
+        [change(item) for item in changes["worse"]],
+        ("red", "bold"),
+    )
+    section("Improved:", [change(item) for item in changes["improved"]], ("green",))
+    section(
+        "New in the baseline:",
+        [[i["case"], _ratio(i["new"])] for i in changes["new"]],
+    )
+    if changes["removed"]:
+        lines += [
+            "",
+            _title("Removed (no longer in the dataset): ")
+            + _case_list(changes["removed"], 10),
+        ]
+    section(
+        "NOT recorded (too few attempts with a verdict, even after retries; "
+        "rerun with make eval-baseline CASE=<name>):",
+        [
+            [i["case"], f"{i['attempts']} complete, {i['incomplete']} without a verdict"]
+            for i in changes["not_recorded"]
+        ],
+        ("red",),
+    )
+    lines += ["", _title("Review the lists above, then commit the baseline file.")]
     return "\n".join(lines)

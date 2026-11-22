@@ -14,6 +14,47 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# Stands in for Poetry: logs each call and, for DeepEval runs, writes one
+# attempt file per case and repetition. EVAL_FAKE_OUTCOMES maps a case to a
+# pattern of outcomes ('p' pass, 'f' fail, 'i' no verdict), consumed in order
+# across the attempts of one run directory.
+FAKE_POETRY = """\
+import json, os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ['CALL_LOG'], 'a') as log:
+    log.write(json.dumps({'args': args, 'cwd': os.getcwd(),
+        'venv': os.environ.get('POETRY_VIRTUALENVS_IN_PROJECT'),
+        'cases': os.environ.get('EVAL_CASES')}) + '\\n')
+if os.environ.get('MUTATE_CHECKOUT'):
+    pathlib.Path('source.txt').write_text('changed during eval')
+results_dir = os.environ.get('EVAL_RESULTS_DIR')
+outcomes = json.loads(os.environ.get('EVAL_FAKE_OUTCOMES') or '{}')
+if results_dir and outcomes:
+    out = pathlib.Path(results_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    repeat = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
+    selected = os.environ.get('EVAL_CASES')
+    names = selected.split(',') if selected else list(outcomes)
+    for name in names:
+        pattern = outcomes[name]
+        for _ in range(repeat):
+            index = len(list(out.parent.rglob(name + '.*.json')))
+            outcome = pattern[index % len(pattern)]
+            if outcome == 'i':
+                record = {'name': name, 'status': 'incomplete',
+                          'error': 'Error code: 429 - Rate limit', 'metrics': []}
+            else:
+                ok = outcome == 'p'
+                record = {'name': name, 'status': 'passed' if ok else 'failed',
+                    'error': None, 'metrics': [{'name': 'Rules Correctness',
+                    'score': 0.9 if ok else 0.2, 'threshold': 0.5,
+                    'success': ok, 'status': 'passed' if ok else 'failed',
+                    'error': None, 'reason': None if ok else 'wrong rule'}]}
+            (out / f'{name}.{index}.json').write_text(json.dumps(record))
+sys.exit(int(os.environ.get('POETRY_EXIT', '0')))
+"""
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         # A real Git hook exports repository-local variables. Never let those
@@ -55,26 +96,7 @@ class RunnerTests(unittest.TestCase):
         self.commit()
         self.log = self.directory / "calls.jsonl"
         executable = self.directory / "poetry"
-        executable.write_text(
-            f"#!{sys.executable}\n"
-            "import json, os, pathlib, sys\n"
-            "with open(os.environ['CALL_LOG'], 'a') as log:\n"
-            "    log.write(json.dumps({'args': sys.argv[1:], "
-            "'cwd': os.getcwd(), "
-            "'venv': os.environ.get('POETRY_VIRTUALENVS_IN_PROJECT')}) + '\\n')\n"
-            "if os.environ.get('MUTATE_CHECKOUT'):\n"
-            "    pathlib.Path('source.txt').write_text('changed during eval')\n"
-            "results_dir = os.environ.get('EVAL_RESULTS_DIR')\n"
-            "payload = os.environ.get('EVAL_FAKE_RESULTS')\n"
-            "if results_dir and payload:\n"
-            "    out = pathlib.Path(results_dir)\n"
-            "    out.mkdir(parents=True, exist_ok=True)\n"
-            "    for case in json.loads(payload):\n"
-            "        (out / f\"{case['name']}.json\").write_text(\n"
-            "            json.dumps(case) + '\\n'\n"
-            "        )\n"
-            "sys.exit(int(os.environ.get('POETRY_EXIT', '0')))\n"
-        )
+        executable.write_text(f"#!{sys.executable}\n" + FAKE_POETRY)
         executable.chmod(0o755)
         self.env = dict(self.git_env)
         for name in (
@@ -84,12 +106,19 @@ class RunnerTests(unittest.TestCase):
             "CI_POLICY_PATH",
             "POETRY_EXIT",
             "MUTATE_CHECKOUT",
-            "EVAL_FAKE_RESULTS",
+            "EVAL_FAKE_OUTCOMES",
+            "EVAL_WORKERS",
+            "EVAL_CASES",
+            "EVAL_VERBOSE",
+            "FORCE_COLOR",
+            "GITHUB_ACTIONS",
         ):
             self.env.pop(name, None)
         self.env.update(
             PATH=f"{self.directory}{os.pathsep}{os.environ['PATH']}",
             CALL_LOG=str(self.log),
+            # Plain text, so assertions read the words, not color codes.
+            NO_COLOR="1",
         )
 
     def git(self, *args):
@@ -196,14 +225,29 @@ class RunnerTests(unittest.TestCase):
 
     def test_eval_uses_backend_and_does_not_change_worker_counts(self):
         self.env["CI_RUN_ID"] = "custom-run"
-        self.run_ci("eval")
+        self.run_ci("eval-ci")
         self.run_ci("eval-conversations")
-        for call, workers in zip(self.calls(), ["3", "1"]):
+        for call, workers in zip(self.calls(), ["2", "1"]):
             self.assertEqual(call["cwd"], str(self.repo / "backend"))
             self.assertEqual(call["venv"], "true")
             args = call["args"]
             self.assertEqual(args[args.index("--num-processes") + 1], workers)
             self.assertEqual(args[args.index("--identifier") + 1], "custom-run")
+
+    def test_eval_workers_configures_only_single_turn_suite(self):
+        self.env["EVAL_WORKERS"] = "4"
+        self.run_ci("eval")
+        self.run_ci("eval-conversations")
+        for call, workers in zip(self.calls(), ["4", "1"]):
+            args = call["args"]
+            self.assertEqual(args[args.index("--num-processes") + 1], workers)
+
+    def test_invalid_eval_workers_fails_before_paid_calls(self):
+        for value in ("0", "-1", "two"):
+            with self.subTest(value=value):
+                self.env["EVAL_WORKERS"] = value
+                self.run_ci("eval", expected=1)
+        self.assertEqual(self.calls(), [])
 
     def test_check_stops_on_lint_failure_without_paid_calls(self):
         self.env["POETRY_EXIT"] = "3"
@@ -248,6 +292,35 @@ class RunnerTests(unittest.TestCase):
         )
         self.assertEqual(self.calls(), [])
 
+    def test_pre_push_to_another_branch_runs_no_evals(self):
+        head = self.git("rev-parse", "HEAD")
+        self.run_ci(
+            "pre-push", input_text=f"HEAD {head} refs/heads/feature {'0' * 40}\n"
+        )
+        self.assertFalse(any("deepeval" in call["args"] for call in self.calls()))
+
+    def test_pre_push_to_main_runs_eval_ci_after_checks(self):
+        head = self.git("rev-parse", "HEAD")
+        self.run_ci(
+            "pre-push", input_text=f"HEAD {head} refs/heads/main {'0' * 40}\n"
+        )
+        calls = [call["args"] for call in self.calls()]
+        self.assertEqual(calls[0], ["check", "--lock"])
+        self.assertIn("deepeval", calls[-1])
+        self.assertNotIn("--repeat", calls[-1])
+
+    def test_pre_push_to_main_is_blocked_by_eval_ci(self):
+        self._write_dataset(["fireball"])
+        self.commit()
+        head = self.git("rev-parse", "HEAD")
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p"})
+        # No committed reference yet: eval-ci blocks, so the push is blocked.
+        self.run_ci(
+            "pre-push",
+            expected=1,
+            input_text=f"HEAD {head} refs/heads/main {'0' * 40}\n",
+        )
+
     def test_hook_propagates_check_failure(self):
         self.env["POETRY_EXIT"] = "5"
         head = self.git("rev-parse", "HEAD")
@@ -274,163 +347,161 @@ class RunnerTests(unittest.TestCase):
         evals_dir.mkdir(parents=True, exist_ok=True)
         (evals_dir / "policy.json").write_text(json.dumps(policy) + "\n")
 
-    def _case_payload(self, name, status, score, *, success=True, error=None):
-        return {
-            "name": name,
-            "status": status,
-            "error": error,
-            "metrics": [
-                {
-                    "name": "Rules Correctness",
-                    "score": score,
-                    "threshold": 0.5,
-                    "success": success,
-                    "status": (
-                        "error"
-                        if error
-                        else (
-                            "incomplete"
-                            if success is None
-                            else ("passed" if success else "failed")
-                        )
-                    ),
-                    "error": error,
-                }
-            ],
-        }
+    def _baseline(self):
+        path = self.repo / "backend/tests/evals/baselines/single-turn.json"
+        return json.loads(path.read_text())
 
-    def test_baseline_comparison_blocks_potential_regression(self):
+    def _deepeval_calls(self):
+        return [call for call in self.calls() if "deepeval" in call["args"]]
+
+    def test_quick_eval_reports_failures_without_failing(self):
         self._write_dataset(["fireball", "shield"])
         self.commit()
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [
-                self._case_payload("fireball", "passed", 0.9),
-                self._case_payload("shield", "passed", 0.85),
-            ]
-        )
-        self.run_ci("eval")
-        self.run_ci("record-baseline")
-
         self.env["POETRY_EXIT"] = "1"
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [
-                self._case_payload("fireball", "passed", 0.9),
-                self._case_payload(
-                    "shield", "failed", 0.3, success=False
-                ),
-            ]
-        )
-        output = self.run_ci("eval", expected=1)
-        self.assertIn("Evaluation delivery policy: BLOCK", output)
-        self.assertIn("potential_regression=1", output)
-        # Blocked runs cannot become the baseline unless explicitly forced.
-        self.run_ci("record-baseline", expected=1)
-        self.run_ci("record-baseline", "--force", expected=0)
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "f", "shield": "p"})
+        output = self.run_ci("eval")
+        self.assertIn("1 of 2 cases passed every metric.", output)
+        self.assertIn("fireball / Rules Correctness: wrong rule", output)
+        (call,) = self._deepeval_calls()
+        self.assertNotIn("--repeat", call["args"])
 
-    def test_non_blocking_known_limitation_allows_delivery(self):
-        self._write_dataset(["fireball", "known-gap"])
-        self._write_policy(
-            {
-                "known_limitations": {
-                    "known-gap": {
-                        "blocking": False,
-                        "reason": "Tracked PDF chunking limit",
-                    }
-                }
-            }
-        )
-        self.commit()
-        self.env["POETRY_EXIT"] = "1"
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [
-                self._case_payload("fireball", "passed", 0.95),
-                self._case_payload(
-                    "known-gap", "failed", 0.35, success=False
-                ),
-            ]
-        )
-        output = self.run_ci("eval", expected=0)
-        self.assertIn("Evaluation delivery policy: ALLOW", output)
-        self.assertIn("Tracked PDF chunking limit", output)
-
-        self.run_ci("record-baseline")
-        # Repeating with a similar score still passes; a sharp drop blocks.
-        output = self.run_ci("eval", expected=0)
-        self.assertIn("continuing_limitation=1", output)
-
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [
-                self._case_payload("fireball", "passed", 0.95),
-                self._case_payload(
-                    "known-gap", "failed", 0.1, success=False
-                ),
-            ]
-        )
-        output = self.run_ci("eval", expected=1)
-        self.assertIn("continuing_limitation_worsened", output)
-
-    def test_record_baseline_rejects_uncommitted_run_unless_forced(self):
+    def test_eval_ci_without_any_reference_stops_before_paid_calls(self):
         self._write_dataset(["fireball"])
-        # Intentionally leave dataset uncommitted so clean_commit() is None.
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [self._case_payload("fireball", "passed", 0.9)]
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p"})
+        self.run_ci("eval-ci", expected=1)
+        self.assertEqual(self._deepeval_calls(), [])
+
+    def test_new_case_without_reference_blocks(self):
+        self._write_dataset(["fireball"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "new": "p"})
+        self.run_ci("eval-baseline")
+        self._write_dataset(["fireball", "new"])
+        self.commit()
+        output = self.run_ci("eval-ci", expected=1)
+        self.assertIn("NO REFERENCE", output)
+        self.assertIn("make eval-baseline CASE=<name>", output)
+
+    def test_baseline_retries_attempts_without_a_verdict(self):
+        self._write_dataset(["fireball"])
+        self.commit()
+        # First attempt gets no verdict; the retry round fills the gap.
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "i" + "p" * 30})
+        output = self.run_ci("eval-baseline")
+        self.assertIn("Retrying 1 attempt(s)", output)
+        entry = self._baseline()["cases"]["fireball"]
+        self.assertEqual((entry["passed"], entry["attempts"]), (20, 20))
+        self.assertEqual(entry["incomplete_attempts"], 1)
+        self.assertEqual(self._deepeval_calls()[-1]["cases"], "fireball")
+
+    def test_eval_cases_in_the_shell_cannot_narrow_a_full_run(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_CASES"] = "fireball"
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "p"})
+        output = self.run_ci("eval")
+        self.assertIn("2 of 2 cases passed every metric.", output)
+        self.assertEqual(self._deepeval_calls()[-1]["cases"], "")
+
+    def test_baseline_commit_label_ignores_the_baseline_file(self):
+        self._write_dataset(["fireball"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p"})
+        self.run_ci("eval-baseline")
+        # The new, uncommitted baseline file must not mark the next rebuild.
+        self.run_ci("eval-baseline", "--case", "fireball")
+        commit = self._baseline()["cases"]["fireball"]["commit"]
+        self.assertEqual(commit, self.git("rev-parse", "--short", "HEAD"))
+
+    def test_eval_baseline_records_attempts_and_reports_failing_cases(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps(
+            {"fireball": "ppp" + "f" * 27, "shield": "p"}
         )
-        self.run_ci("eval")
-        self.run_ci("record-baseline", expected=1)
-        self.run_ci("record-baseline", "--force", expected=0)
+        output = self.run_ci("eval-baseline")
+        (call,) = self._deepeval_calls()
+        self.assertEqual(call["args"][call["args"].index("--repeat") + 1], "20")
+        self.assertFalse(call["cases"])
+        cases = self._baseline()["cases"]
+        self.assertEqual((cases["fireball"]["passed"], cases["fireball"]["attempts"]), (3, 20))
+        self.assertEqual(cases["shield"]["passed"], 20)
+        self.assertIn("Fails in the new baseline:", output)
+        self.assertIn("fireball  3/20", output)
+
+    def test_single_case_baseline_rebuild_runs_only_that_case(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "f", "shield": "p"})
+        self.run_ci("eval-baseline")
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "f"})
+        output = self.run_ci("eval-baseline", "--case", "fireball")
+        self.assertEqual(self._deepeval_calls()[-1]["cases"], "fireball")
+        cases = self._baseline()["cases"]
+        self.assertEqual(cases["fireball"]["passed"], 20)
+        self.assertEqual(cases["shield"]["passed"], 20)
+        self.assertIn("Improved:", output)
+
+    def test_unknown_case_fails_before_paid_calls(self):
+        self._write_dataset(["fireball"])
+        self.run_ci("eval-baseline", "--case", "nope", expected=1)
+        self.assertEqual(self._deepeval_calls(), [])
+
+    def test_failure_that_is_normal_for_the_case_does_not_block(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "f", "shield": "p"})
+        self.run_ci("eval-baseline")
+        self.env["POETRY_EXIT"] = "1"
+        output = self.run_ci("eval-ci")
+        self.assertEqual(len(self._deepeval_calls()), 2)  # no confirmation run
+        self.assertIn("Fails in the reference", output)
+        self.assertTrue(output.rstrip().endswith("Decision: ALLOW"))
+
+    def test_confirmed_regression_blocks_after_confirmation_attempts(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "p"})
+        self.run_ci("eval-baseline")
+        self.env["POETRY_EXIT"] = "1"
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "f"})
+        output = self.run_ci("eval-ci", expected=1)
+        confirmation = self._deepeval_calls()[-1]
+        self.assertEqual(confirmation["cases"], "shield")
+        self.assertEqual(
+            confirmation["args"][confirmation["args"].index("--repeat") + 1], "5"
+        )
+        self.assertIn("REGRESSION", output)
+        self.assertIn("Decision: BLOCK (1 regression)", output)
+
+    def test_unconfirmed_suspect_does_not_block(self):
+        self._write_dataset(["shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"shield": "p"})
+        self.run_ci("eval-baseline")
+        # First attempt fails, the five confirmation attempts pass.
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"shield": "fppppp"})
+        output = self.run_ci("eval-ci")
+        self.assertIn("not confirmed", output)
+        self.assertTrue(output.rstrip().endswith("Decision: ALLOW"))
+
+    def test_incomplete_attempt_blocks_even_when_deepeval_exits_zero(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "p"})
+        self.run_ci("eval-baseline")
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "i"})
+        output = self.run_ci("eval-ci", expected=1)
+        self.assertIn("INCOMPLETE", output)
+        self.assertIn("Rate limit exceeded (HTTP 429)", output)
 
     def test_invalid_policy_fails_before_paid_eval_calls(self):
         self._write_dataset(["fireball"])
         self._write_policy({"unknown_key": True})
-        self.run_ci("eval", expected=1)
-        self.assertEqual(self.calls(), [])
-
-    def test_incomplete_assessment_blocks_even_when_deepeval_exits_zero(self):
-        self._write_dataset(["fireball", "shield"])
-        self.commit()
-        self.env["POETRY_EXIT"] = "0"
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [
-                self._case_payload("fireball", "passed", 0.9),
-                # shield omitted (simulates skipped/errored metric under
-                # --ignore-errors / --skip-on-missing-params).
-            ]
-        )
-        output = self.run_ci("eval", expected=1)
-        self.assertIn("incomplete_assessment=1", output)
-        self.run_ci("record-baseline", expected=1)
-
-    def test_eval_compare_runs_offline_against_saved_reports(self):
-        self._write_dataset(["fireball"])
-        self.commit()
-        self.env["EVAL_FAKE_RESULTS"] = json.dumps(
-            [self._case_payload("fireball", "passed", 0.9)]
-        )
-        self.run_ci("eval")
-        self.run_ci("record-baseline")
-
-        candidate_file = self.directory / "candidate.json"
-        candidate_file.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "suite": "single-turn",
-                    "run_id": "offline-1",
-                    "commit": "deadbeef",
-                    "cases": {
-                        "fireball": self._case_payload(
-                            "fireball", "failed", 0.2, success=False
-                        )
-                    },
-                }
-            )
-        )
-        calls_before = len(self.calls())
-        output = self.run_ci(
-            "eval-compare", "--candidate", str(candidate_file), expected=1
-        )
-        self.assertIn("potential_regression=1", output)
-        self.assertEqual(len(self.calls()), calls_before)
+        self.run_ci("eval-ci", expected=1)
+        self.run_ci("eval-baseline", expected=1)
+        self.assertEqual(self._deepeval_calls(), [])
 
 
 if __name__ == "__main__":

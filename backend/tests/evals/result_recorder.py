@@ -1,17 +1,35 @@
-"""Record structured per-case evaluation outcomes for CI comparison.
+"""Record structured per-attempt evaluation outcomes for CI comparison.
 
 When ``EVAL_RESULTS_DIR`` is set, each evaluation test writes one JSON file per
-case so ``scripts/eval_policy.py`` can compare the run against a reference
-baseline and detect incomplete assessments even when DeepEval runs with
+attempt, so a case repeated with ``--repeat`` keeps every attempt and
+``scripts/eval_policy.py`` can count passes against the committed reference.
+Incomplete assessments are recorded too, even when DeepEval runs with
 ``--ignore-errors`` or ``--skip-on-missing-params``. When the variable is
 unset, recording is a no-op and direct ``deepeval test run`` invocations keep
 their standard behavior.
+
+``EVAL_CASES`` (comma-separated case names) restricts a run to those cases.
 """
 
 import json
 import os
 from pathlib import Path
 import re
+import uuid
+
+
+def select_cases(goldens):
+    """The goldens named in ``EVAL_CASES``, or all of them when it is unset."""
+    raw = os.environ.get("EVAL_CASES")
+    if not raw:
+        return goldens
+    wanted = {name.strip() for name in raw.split(",") if name.strip()}
+    unknown = wanted - {golden.get("name") for golden in goldens}
+    if unknown:
+        raise ValueError(
+            "EVAL_CASES names unknown cases: " + ", ".join(sorted(unknown))
+        )
+    return [golden for golden in goldens if golden.get("name") in wanted]
 
 
 def _results_dir():
@@ -32,7 +50,9 @@ def _write_case_record(record):
     directory = _results_dir()
     if directory is None:
         return
-    filename = f"{_safe_filename(record['name'])}.json"
+    # One file per attempt: repeated attempts of a case never overwrite each
+    # other.
+    filename = f"{_safe_filename(record['name'])}.{uuid.uuid4().hex[:12]}.json"
     target = directory / filename
     temporary = directory / f".{filename}.{os.getpid()}.tmp"
     temporary.write_text(json.dumps(record, indent=2) + "\n")
@@ -75,6 +95,9 @@ def _snapshot_metrics(metrics):
         success = raw_success if isinstance(raw_success, bool) else None
         raw_error = getattr(metric, "error", None)
         error = str(raw_error) if raw_error else None
+        # The judge's explanation, kept so a failed case can be read later.
+        raw_reason = getattr(metric, "reason", None)
+        reason = str(raw_reason) if raw_reason else None
 
         if error is not None:
             status = "error"
@@ -93,6 +116,7 @@ def _snapshot_metrics(metrics):
                 "success": success,
                 "status": status,
                 "error": error,
+                "reason": reason,
             }
         )
     return snapshots

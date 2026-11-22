@@ -13,15 +13,17 @@ This fork adds testing, monitoring and curation to explore the CD4AI cycle.
 
 | Stage | What this project does |
 | --- | --- |
-| **Testing** | Runs code checks and chatbot evaluations, compares case outcomes against a saved reference baseline, and enforces the delivery policy in [`backend/tests/evals/policy.json`](backend/tests/evals/policy.json). |
+| **Testing** | Runs code checks and chatbot evaluations. Each case is compared with its own pass rate in a committed reference ([`backend/tests/evals/baselines/`](backend/tests/evals/baselines/)) using Fisher's exact test; CI blocks only on a confirmed regression or on missing evidence ([`backend/tests/evals/policy.json`](backend/tests/evals/policy.json)). |
 | **Monitoring** | Records interactions and user feedback, and flags possible failures with lightweight detectors. |
 | **Curation** | Supports human review to distinguish real defects from noise. Developers manually turn confirmed defects into new regression cases. |
 
 To close the cycle, a developer defines the expected behavior for a confirmed
 problem, adds a case to the [evaluation dataset](backend/tests/evals/.dataset.json)
-and runs the evaluations alongside the fix (or records it as a known limitation
-in [`backend/tests/evals/policy.json`](backend/tests/evals/policy.json) while a
-fix is pending). That case becomes part of future regression runs. See the
+records its reference with `make eval-baseline CASE=<name>`, and commits both.
+If the case still fails because a fix is pending, its reference records that
+failure rate as accepted behavior, so it is visible in every report without
+blocking unrelated changes. That case becomes part of future regression runs.
+See the
 [manual curation guide](backend/tests/evals/README.md#adding-a-regression-case-manually).
 
 ## Try the checks
@@ -42,15 +44,16 @@ For chatbot evaluations, first configure `backend/.env` from
 
 | Command | Evaluation |
 | --- | --- |
-| `make eval` | Individual answers, compared against the saved reference baseline |
-| `make eval-conversations` | Conversations with multiple turns, compared against the saved reference baseline |
+| `make eval` | Run every single-turn case once and show which pass and fail (informative; never blocks) |
+| `make eval-ci` | What CI runs: compare each case with the committed reference, give failed cases that usually pass extra attempts, block on regressions or missing evidence |
+| `make eval-baseline` | Rebuild the reference (20 attempts per case) and report failing, worse and improved cases; review and commit it |
+| `make eval-baseline CASE=<name>` | Rebuild the reference for one case (new, edited or fixed) |
+| `make eval-conversations` | Conversations with multiple turns, reported against their own criteria |
 | `make eval-conversations-if-changed` | Conversations, skipping the commit if it is already recorded as successfully evaluated |
-| `make eval-record-baseline` | Promote the latest complete evaluation report in `.ci-state/` to the reference baseline (no API calls) |
-| `make eval-compare` | Compare the latest saved report against the reference baseline offline (no API calls) |
 
 These evaluations use paid APIs. The commands work independently of GitHub;
 GitHub Actions runs the same commands for PRs and scheduled evaluations.
-An optional `pre-push` hook runs the checks without paid evaluations.
+An optional `pre-push` hook runs the free checks before every push and, when the push updates `main`, also `make eval-ci` (paid).
 
 ## Documentation
 
