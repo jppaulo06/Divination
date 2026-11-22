@@ -119,6 +119,7 @@ class RunnerTests(unittest.TestCase):
             CALL_LOG=str(self.log),
             # Plain text, so assertions read the words, not color codes.
             NO_COLOR="1",
+            EVAL_RETRY_PAUSE="0",
         )
 
     def git(self, *args):
@@ -495,6 +496,18 @@ class RunnerTests(unittest.TestCase):
         output = self.run_ci("eval-ci", expected=1)
         self.assertIn("INCOMPLETE", output)
         self.assertIn("Rate limit exceeded (HTTP 429)", output)
+
+    def test_eval_ci_retries_an_attempt_without_a_verdict(self):
+        self._write_dataset(["fireball", "shield"])
+        self.commit()
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "p"})
+        self.run_ci("eval-baseline")
+        # The first attempt hits a rate limit; the retry gets a verdict.
+        self.env["EVAL_FAKE_OUTCOMES"] = json.dumps({"fireball": "p", "shield": "ip"})
+        output = self.run_ci("eval-ci")
+        self.assertIn("Retrying 1 attempt(s) without a verdict for 1 case(s)", output)
+        self.assertEqual(self._deepeval_calls()[-1]["cases"], "shield")
+        self.assertTrue(output.rstrip().endswith("Decision: ALLOW"))
 
     def test_invalid_policy_fails_before_paid_eval_calls(self):
         self._write_dataset(["fireball"])

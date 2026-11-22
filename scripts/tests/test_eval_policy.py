@@ -235,6 +235,11 @@ class DecisionTests(unittest.TestCase):
                 decision = self.decide(attempts, baseline)
                 self.assertFalse(decision["allow_delivery"])
 
+    def test_retried_attempt_with_a_verdict_makes_up_for_a_missing_one(self):
+        decision = self.decide(_attempts(shield="ip"), _baseline(shield=(30, 30)))
+        self.assertEqual(decision["cases"]["shield"]["verdict"], "consistent")
+        self.assertTrue(decision["allow_delivery"])
+
     def test_suspect_without_its_confirmation_attempts_is_incomplete(self):
         # The confirmation run crashed: only the first attempt was recorded.
         decision = self.decide(

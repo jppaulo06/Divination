@@ -238,7 +238,9 @@ With 20 reference attempts, that threshold falsely blocks a case at most about
 suite), and a case that stops passing is always caught. Moderate declines
 (for example, from 95% to 50%) are caught only in about one pull request in
 four: six attempts carry little evidence. They are caught more reliably when
-the reference is rebuilt, which compares 20 attempts with 20.
+the reference is rebuilt, which compares 20 attempts with 20. Attempts that
+get no verdict (usually rate limits) are retried after a pause, up to three
+extra rounds, before a case counts as missing evidence.
 
 CI blocks only on a confirmed regression or on missing evidence: an attempt
 without a verdict (an error or rate limit under `--ignore-errors` /

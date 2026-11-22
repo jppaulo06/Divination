@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 # Avoid creating scripts/__pycache__ in minimal checkouts without it ignored.
 sys.dont_write_bytecode = True
@@ -23,8 +24,10 @@ BACKEND = ROOT / "backend"
 EVAL_DATASET = BACKEND / "tests/evals/.dataset.json"
 EVAL_POLICY = BACKEND / "tests/evals/policy.json"
 BASELINE_DIR = BACKEND / "tests/evals/baselines"
-# Extra rounds that rerun baseline attempts left without a verdict.
-BASELINE_RETRY_ROUNDS = 3
+# Extra rounds that rerun attempts left without a verdict (usually rate
+# limits), and the pause before each one: Maritaca's limit is per minute.
+RETRY_ROUNDS = 3
+DEFAULT_RETRY_PAUSE_SECONDS = 60
 SUITES = ("single-turn", "conversational")
 # Pushes that update this branch also run the paid eval-ci comparison.
 DELIVERY_REF = "refs/heads/main"
@@ -298,6 +301,57 @@ def run_attempts(
     return returncode
 
 
+def retry_pause():
+    """Seconds to wait before a retry round (EVAL_RETRY_PAUSE, default 60)."""
+    value = os.environ.get("EVAL_RETRY_PAUSE")
+    if value is None or not value.strip():
+        return DEFAULT_RETRY_PAUSE_SECONDS
+    if not value.strip().isdigit():
+        raise ValueError(
+            f"EVAL_RETRY_PAUSE must be a whole number of seconds, got {value!r}"
+        )
+    return int(value)
+
+
+def retry_missing(suite, run_dir, identifier, attempts, targets, workers):
+    """Rerun attempts without a verdict until each case in ``targets`` has
+    that many attempts with a verdict, for at most ``RETRY_ROUNDS`` rounds.
+
+    Returns the attempts collected afterwards. A case still short of its
+    target is left for the policy to judge as missing evidence.
+    """
+    names = list(attempts)
+    for _ in range(RETRY_ROUNDS):
+        missing = {
+            name: target - eval_policy.tally(attempts[name])["attempts"]
+            for name, target in targets.items()
+        }
+        missing = {name: count for name, count in missing.items() if count > 0}
+        if not missing:
+            break
+        pause = retry_pause()
+        print(
+            paint(
+                f"Retrying {sum(missing.values())} attempt(s) without a "
+                f"verdict for {len(missing)} case(s)"
+                + (f" after a {pause}s pause..." if pause else "..."),
+                "yellow",
+            )
+        )
+        time.sleep(pause)
+        run_attempts(
+            suite,
+            run_dir,
+            identifier,
+            cases=list(missing),
+            case_count=len(missing),
+            attempts=max(missing.values()),
+            workers=workers,
+        )
+        attempts = eval_policy.collect_attempts(run_dir, names)
+    return attempts
+
+
 def quick_eval():
     """Run every single-turn case once and show which pass and which fail.
 
@@ -389,6 +443,17 @@ def evaluate(conversational=False):
             raise subprocess.CalledProcessError(returncode, "deepeval test run")
         return
     attempts = eval_policy.collect_attempts(run_dir, expected_cases)
+    if not conversational:
+        # The conversational test simulates every conversation at import, so
+        # a retry would rerun the whole suite; it is not retried.
+        attempts = retry_missing(
+            suite,
+            run_dir,
+            identifier,
+            attempts,
+            {name: 1 for name in expected_cases},
+            workers,
+        )
 
     suspects = (
         []
@@ -414,6 +479,14 @@ def evaluate(conversational=False):
             workers=workers,
         )
         attempts = eval_policy.collect_attempts(run_dir, expected_cases)
+        attempts = retry_missing(
+            suite,
+            run_dir,
+            identifier,
+            attempts,
+            {name: 1 + extra for name in suspects},
+            workers,
+        )
 
     decision = eval_policy.decide(
         attempts,
@@ -493,31 +566,14 @@ def eval_baseline(cases=None):
 
     # Attempts without a verdict (usually rate limits) are rerun, so one
     # error does not leave a case out of the reference.
-    for _ in range(BASELINE_RETRY_ROUNDS):
-        missing = {
-            name: attempts_per_case - eval_policy.tally(records)["attempts"]
-            for name, records in attempts.items()
-        }
-        missing = {name: count for name, count in missing.items() if count > 0}
-        if not missing:
-            break
-        print(
-            paint(
-                f"Retrying {sum(missing.values())} attempt(s) without a "
-                f"verdict for {len(missing)} case(s)...",
-                "yellow",
-            )
-        )
-        run_attempts(
-            suite,
-            run_dir,
-            identifier,
-            cases=list(missing),
-            case_count=len(missing),
-            attempts=max(missing.values()),
-            workers=workers,
-        )
-        attempts = eval_policy.collect_attempts(run_dir, selected)
+    attempts = retry_missing(
+        suite,
+        run_dir,
+        identifier,
+        attempts,
+        {name: attempts_per_case for name in selected},
+        workers,
+    )
 
     commit = code_commit()
     baseline, changes = eval_policy.build_baseline(

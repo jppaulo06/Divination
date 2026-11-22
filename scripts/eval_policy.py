@@ -281,7 +281,7 @@ def find_suspects(attempts, baseline, policy):
     for name, records in attempts.items():
         reference = _reference(baseline, name)
         result = tally(records)
-        if reference is None or result["incomplete"] or not result["attempts"]:
+        if reference is None or not result["attempts"]:
             continue
         if result["passed"] < result["attempts"] and can_confirm(reference, policy):
             suspects.append(name)
@@ -309,20 +309,17 @@ def decide(
     for name, records in attempts.items():
         result = tally(records)
         reference = _reference(baseline, name)
-        missing = max(
-            0,
-            expected_attempts.get(name, 1)
-            - result["attempts"]
-            - result["incomplete"],
-        )
+        # Judged on attempts with a verdict; retried attempts that finally
+        # got one make up for those that did not.
+        missing = max(0, expected_attempts.get(name, 1) - result["attempts"])
         entry = {
             "run": {"passed": result["passed"], "attempts": result["attempts"]},
-            "incomplete_attempts": result["incomplete"] + missing,
+            "incomplete_attempts": missing,
             "reference": reference,
             "p_value": None,
             "suspect": name in suspects,
         }
-        if result["incomplete"] or missing or not result["attempts"]:
+        if missing or not result["attempts"]:
             verdict = "incomplete"
         elif reference is None:
             verdict = "no_reference" if require_reference else "unreferenced"

@@ -102,9 +102,16 @@ regression, an attempt without a verdict, or a case without a reference does.
 `make eval-baseline` runs 25 cases x 20 attempts (roughly 1.5 hours with two
 workers), so rebuild everything only occasionally and use
 `make eval-baseline CASE=<name>` for new, edited or fixed cases (edited cases
-are not detected automatically). Attempts without a verdict are rerun up to
-three times. Review its
+are not detected automatically). Review its
 report (failing, worse, improved and new cases) and commit the baseline file.
+
+Both `make eval-ci` and `make eval-baseline` rerun attempts that got no verdict
+(usually Maritaca rate limits), for up to three extra rounds. Each retry round
+waits 60 seconds first, because the rate limit is per minute; set
+`EVAL_RETRY_PAUSE` (in seconds) to change the wait. A case still short of
+attempts with a verdict after the retries counts as missing evidence. The
+conversational suite is not retried: it simulates every conversation at
+start-up, so a retry would rerun the whole suite.
 Set `CI_POLICY_PATH` to use an alternate policy file. The latest report and
 decision are also saved under `.ci-state/` for inspection.
 
